@@ -48,7 +48,7 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
     projectId: requiredEnvironmentValue("SPECTRUM_PROJECT_ID"),
     projectSecret: requiredEnvironmentValue("SPECTRUM_PROJECT_SECRET"),
     providers: [
-      imessage.config(),
+      ...(process.env.DISABLE_IMESSAGE ? [] : [imessage.config()]),
       ...(process.env.TELEGRAM_BOT_TOKEN ? [telegram.config({ botToken: process.env.TELEGRAM_BOT_TOKEN })] : []),
     ],
     options: { logLevel: "error" },
