@@ -59,8 +59,8 @@ async function mirror(from: string, to: string, amount: number): Promise<void> {
     const body = {
       medium: "balance",
       transaction_date: new Date().toISOString().slice(0, 10),
-      status: "pending",
-      amount,
+      status: "completed",
+      amount: Math.round(amount),
       description: "called it stake",
     };
     await Promise.all([
