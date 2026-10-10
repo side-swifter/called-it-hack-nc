@@ -8,8 +8,10 @@ export interface Player {
 // they just show up by the last 4 digits of their number.
 export const ROSTER: Player[] = [{ alias: "Akshay", handle: "+19843303521" }];
 
+export const NAMES = new Map<string, string>();
+
 export function aliasFor(handle: string): string {
-  return ROSTER.find((p) => p.handle === handle)?.alias ?? `…${handle.replace(/\D/g, "").slice(-4)}`;
+  return NAMES.get(handle) ?? ROSTER.find((p) => p.handle === handle)?.alias ?? `…${handle.replace(/\D/g, "").slice(-4)}`;
 }
 
 export function realBetFor(targetAlias: string): string {

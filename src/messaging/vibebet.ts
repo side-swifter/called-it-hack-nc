@@ -3,7 +3,7 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
-import { ENTRY_FEE_CHIPS, PLACEBO_BET, aliasFor } from "../vibebet/config.js";
+import { ENTRY_FEE_CHIPS, NAMES, PLACEBO_BET, aliasFor } from "../vibebet/config.js";
 import { HOUSE, transfer } from "../vibebet/chips.js";
 import { logMessage, logOutcome, writeBet } from "../vibebet/brain.js";
 import {
@@ -122,6 +122,29 @@ async function openDm(app: Awaited<ReturnType<typeof Spectrum>>, handle: string)
   return platform.space.create(handle);
 }
 
+async function tgApi(method: string, params: Record<string, string>): Promise<any> {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return undefined;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}?${new URLSearchParams(params)}`);
+    return (await res.json()).result;
+  } catch {
+    return undefined;
+  }
+}
+
+// Telegram only gives us numeric ids; ask the Bot API for real first names.
+async function resolveNames(chatId: string, ids: string[]): Promise<void> {
+  await Promise.all(
+    ids.map(async (id) => {
+      if (NAMES.has(id) || !/^\d+$/.test(id)) return;
+      const m = await tgApi("getChatMember", { chat_id: chatId, user_id: id });
+      const name = m?.user?.first_name ?? m?.user?.username;
+      if (name) NAMES.set(id, name);
+    }),
+  );
+}
+
 async function handleGroupMessage(
   app: Awaited<ReturnType<typeof Spectrum>>,
   space: Space,
@@ -159,6 +182,19 @@ async function handleGroupMessage(
     // If member lookup fails (shared line), fall back to whoever just spoke.
     const speaker = message.sender?.id;
     if (players.length === 0 && speaker) players = [speaker];
+    if (space.id.startsWith("-")) {
+      await resolveNames(space.id, players);
+      const count = await tgApi("getChatMemberCount", { chat_id: space.id });
+      const humans = typeof count === "number" ? count - 1 : players.length;
+      if (humans > players.length) {
+        await replyIn(
+          space,
+          `heads up: i only know ${players.length} of ${humans} of u. everyone else send ANY msg here (or /start in my dm) then type /bet again.`,
+        );
+        resetState();
+        return;
+      }
+    }
     if (players.length === 0) {
       await replyIn(space, "hm i can't see who's in here yet, someone say smth");
       resetState();
