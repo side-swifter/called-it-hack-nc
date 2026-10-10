@@ -2,6 +2,8 @@
 // Falls back to seeded fake history + a template when Snowflake isn't configured.
 import snowflake from "snowflake-sdk";
 
+snowflake.configure({ logLevel: "ERROR" });
+
 const SEED: Record<string, [number, number]> = {}; // alias -> [hits, total]
 
 function configured(): boolean {
@@ -74,7 +76,7 @@ export async function writeBet(target: string, item: string): Promise<string> {
   if (!configured()) return fallback;
   try {
     const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no". Output only the message.`;
-    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', ?) AS R", [prompt]);
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]);
     const text = String(rows[0]?.R ?? "").trim();
     return text || fallback;
   } catch (e) {
@@ -98,7 +100,7 @@ export async function reactToPhoto(target: string, item: string): Promise<string
   if (!configured()) return canned;
   try {
     const prompt = `You are a playful, slightly snarky friend in a group chat. Someone just sent a proof photo for the bet "will ${target} wear ${item} today". React in ONE short lowercase sentence with one emoji, like you studied the photo. Output only the message.`;
-    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', ?) AS R", [prompt]);
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]);
     return String(rows[0]?.R ?? "").trim() || canned;
   } catch (e) {
     console.error("[cortex] reaction failed:", (e as Error).message);
