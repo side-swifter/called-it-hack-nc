@@ -206,6 +206,7 @@ async function announceResult(): Promise<void> {
     `🚨 CALLED IT. ${target} really did it. ${state.proofs.size} people confirmed. ${names} split the ${state.pot}-chip pot. everyone else... pay up 💀`,
     players,
   );
+  pendingBets.clear();
   resetState();
 }
 
@@ -222,6 +223,7 @@ async function say(group: Space | null, text: string, players: string[]): Promis
 }
 
 const known = new Set<string>();
+const pendingBets = new Map<string, string>();
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
 
 // DM-only mode: everyone who texted the bot is a player.
@@ -263,12 +265,21 @@ async function sendPrivateBets(
   const realBet = await writeBet(aliasFor(target), ENTRY_FEE_CHIPS);
 
   for (const handle of players) {
+    const bet = handle === target ? PLACEBO_BET : realBet;
     try {
       const dmSpace = await openDm(app, handle);
-      await replyIn(dmSpace, handle === target ? PLACEBO_BET : realBet);
+      await replyIn(dmSpace, bet);
     } catch (err) {
-      console.error(`Failed to DM ${handle}:`, err);
+      // Telegram: bot can't DM until the user taps Start. Hold it for later.
+      pendingBets.set(handle, bet);
+      console.error(`Could not DM ${handle} yet, holding bet.`);
     }
+  }
+  if (pendingBets.size > 0 && getState().groupSpace) {
+    await replyIn(
+      getState().groupSpace!,
+      `${pendingBets.size} of u haven't opened a chat with me yet 👀 tap t.me/Called_it_ai_bot → hit START and i'll send ur bet instantly.`,
+    );
   }
 }
 
@@ -280,6 +291,12 @@ async function handleDM(
   const state = getState();
   const me = message.sender?.id;
   if (me) known.add(me);
+  if (me && pendingBets.has(me)) {
+    const bet = pendingBets.get(me)!;
+    pendingBets.delete(me);
+    await replyIn(space, bet);
+    return;
+  }
   if (state.phase === "idle" && text && /\b(start|go|bet|play)\b/i.test(text)) {
     await startDmGame(theApp!, space);
     return;
