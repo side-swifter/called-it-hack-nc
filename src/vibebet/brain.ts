@@ -39,6 +39,7 @@ async function ensureTables(): Promise<void> {
   if (tableReady) return;
   await run("CREATE TABLE IF NOT EXISTS CALLED_IT_MESSAGES (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, sender STRING, body STRING)");
   await run("CREATE TABLE IF NOT EXISTS CALLED_IT_OUTCOMES (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, target STRING, bet STRING, hit BOOLEAN)");
+  await run("CREATE TABLE IF NOT EXISTS CALLED_IT_CHAT (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, chat_id STRING, sender STRING, name STRING, body STRING)");
   tableReady = true;
 }
 
@@ -70,12 +71,12 @@ async function historyFor(target: string): Promise<[number, number]> {
   return SEED[target];
 }
 
-export async function writeBet(target: string, item: string): Promise<string> {
+export async function writeBet(target: string, item: string, reason?: string): Promise<string> {
   const [hits, total] = await historyFor(target);
-  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no" (5 chips).`;
+  const fallback = `🎯 new bet: will ${target} wear ${item} today? ${total >= 3 ? `history says ${hits}/${total}. ` : ""}reply "yes" or "no" (5 chips).`;
   if (!configured()) return fallback;
   try {
-    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no" (5 chips). Output only the message.`;
+    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. ${total >= 3 ? ` Mention their history: it happened ${hits} of the last ${total} times.` : ""} Use ONLY the facts given here, never invent names, surnames, quotes or details.${reason ? ` Also work in this fact from their group chat: ${reason}.` : ""} End with: reply "yes" or "no" (5 chips). Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     const text = String(rows[0]?.R ?? "").trim();
     return text || fallback;
@@ -193,5 +194,74 @@ export async function judgeProof(opts: { target: string; item: string; text: str
   } catch (e) {
     console.error("[cortex] judge failed:", (e as Error).message);
     return fallback;
+  }
+}
+
+// ---- Chat indexing: every group message is stored by chat, then read back to plan the bet.
+const memoryChat = new Map<string, string[]>();
+
+export function logChat(chatId: string, sender: string, name: string, body: string): void {
+  const mem = memoryChat.get(chatId) ?? [];
+  mem.push(`${name}: ${body}`);
+  if (mem.length > 100) mem.shift();
+  memoryChat.set(chatId, mem);
+  if (!configured()) return;
+  ensureTables()
+    .then(() => run("INSERT INTO CALLED_IT_CHAT (chat_id, sender, name, body) VALUES (?, ?, ?, ?)", [chatId, sender, name, body]))
+    .catch((e) => console.error("[snowflake] chat log failed:", e.message));
+}
+
+export async function recentChat(chatId: string, limit = 80): Promise<string[]> {
+  if (configured()) {
+    try {
+      await ensureTables();
+      const rows = await run(
+        `SELECT name, body FROM (SELECT ts, name, body FROM CALLED_IT_CHAT WHERE chat_id = ? ORDER BY ts DESC LIMIT ${limit}) ORDER BY ts ASC`,
+        [chatId],
+      );
+      if (rows.length) return rows.map((r) => `${r.NAME}: ${r.BODY}`);
+    } catch (e) {
+      console.error("[snowflake] chat read failed:", (e as Error).message);
+    }
+  }
+  return memoryChat.get(chatId) ?? [];
+}
+
+export interface BetPlan {
+  target: string;
+  item: string;
+  reason: string;
+  decoyPerson: string;
+  decoyItem: string;
+  decoyReason: string;
+}
+
+// Cortex reads the group chat and picks who the bet is about, what they'd wear, and why.
+export async function planBets(chat: string[], names: string[], itemOptions: string[]): Promise<BetPlan | undefined> {
+  if (!configured()) return undefined;
+  const prompt = [
+    "You run prop bets in a friend group chat about what clothing someone will wear TODAY.",
+    `People in the group: ${names.join(", ")}.`,
+    `Group chat so far (oldest first):\n${chat.join("\n") || "(nothing)"}`,
+    "Pick the person and clothing item that the chat makes most interesting: someone who mentioned an item or color they love/hate/always wear, got teased about an outfit, or has a running joke. If the chat gives nothing, pick anyone and one of: " + itemOptions.join(", ") + ".",
+    "Also pick a DIFFERENT person for a decoy bet that looks equally natural, with a different item and its own reason from the chat if possible.",
+    `Reply with JSON only: {"target": "<name from the list>", "item": "<e.g. black pants>", "reason": "<short chat fact, e.g. 'he said he loves black pants'>", "decoyPerson": "<different name from the list>", "decoyItem": "<item>", "decoyReason": "<short chat fact or empty>"}`,
+  ].join("\n");
+  try {
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
+    const raw = String(rows[0]?.R ?? "");
+    const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    if (!j.target || !j.item) return undefined;
+    return {
+      target: String(j.target),
+      item: String(j.item),
+      reason: String(j.reason ?? ""),
+      decoyPerson: String(j.decoyPerson ?? ""),
+      decoyItem: String(j.decoyItem ?? ""),
+      decoyReason: String(j.decoyReason ?? ""),
+    };
+  } catch (e) {
+    console.error("[cortex] plan failed:", (e as Error).message);
+    return undefined;
   }
 }

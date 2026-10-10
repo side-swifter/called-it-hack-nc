@@ -5,7 +5,7 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { classifyIntent, converse, judgeProof, warmUp, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyIntent, converse, judgeProof, logChat, planBets, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -190,7 +190,10 @@ async function handleGroupMessage(
     remember(message.sender.id);
     addToGroup(space.id, message.sender.id);
   }
-  if (text && message.sender?.id) logMessage(message.sender.id, text);
+  if (text && message.sender?.id && !text.trim().startsWith("/")) {
+    await resolveNames(space.id, [message.sender.id]);
+    logChat(space.id, message.sender.id, aliasFor(message.sender.id), text);
+  }
 
   // Dedicated lines deliver an "addMember" event when the bot is added; shared
   // lines don't, so the first message in the group is the fallback trigger.
@@ -237,27 +240,35 @@ async function handleGroupMessage(
     if (myGame !== gameGen) return; // a newer /bet replaced this one
 
     let players = await groupPlayers(space, botPhone);
-    // If member lookup fails (shared line), fall back to whoever just spoke.
     const speaker = message.sender?.id;
     if (players.length === 0 && speaker) players = [speaker];
     if (space.id.startsWith("-")) {
       await resolveNames(space.id, players);
       const count = await tgApi("getChatMemberCount", { chat_id: space.id });
       const humans = typeof count === "number" ? count - 1 : players.length;
-      if (humans > players.length) {
-        await replyIn(
-          space,
-          `i can see ${players.length} of u so far. anyone else who says something here gets pulled in 👀`,
-        );
+      if (humans < 3) {
+        await replyIn(space, "this needs at least 3 ppl in the gc (the decoy bet needs someone to fool). add another friend and /bet again 🎲");
+        resetState();
+        return;
       }
     }
-    if (players.length === 0) {
-      await replyIn(space, "hm i can't see who's in here yet, someone say smth");
+    if (players.length < 3) {
+      await replyIn(
+        space,
+        `i've only seen ${players.length} of u talk in here. i need 3+ to run it, get everyone to say something and /bet again 👀`,
+      );
       resetState();
       return;
     }
-    const target = players[Math.floor(Math.random() * players.length)];
-    const item = ITEMS[Math.floor(Math.random() * ITEMS.length)];
+
+    // Read the indexed chat from Snowflake and let Cortex pick the bet.
+    const chatLines = await recentChat(space.id);
+    const names = players.map(aliasFor);
+    const plan = await planBets(chatLines, names, ITEMS);
+    const byName = (n?: string) => players.find((p) => aliasFor(p).toLowerCase() === (n ?? "").trim().toLowerCase());
+    const target = byName(plan?.target) ?? players[Math.floor(Math.random() * players.length)];
+    const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];
+    pendingPlan = plan && byName(plan.target) ? plan : undefined;
     openBet(aliasFor(target), item, space, players);
 
     await replyIn(
@@ -391,6 +402,7 @@ function addToGroup(groupId: string, id: string): void {
   } catch {}
 }
 let currentRealBet = "";
+let pendingPlan: import("../vibebet/brain.js").BetPlan | undefined;
 const STAKE = 5;
 
 function standings(groupId?: string): string {
@@ -441,11 +453,13 @@ async function sendPrivateBets(
   const state = getState();
   // Decoy: the target gets a bet about someone else, same format, so it looks real.
   const others = players.filter((p) => p !== target);
-  const decoyPerson = others.length ? others[Math.floor(Math.random() * others.length)] : target;
-  const decoyItem = ITEMS.filter((i) => i !== state.item)[Math.floor(Math.random() * (ITEMS.length - 1))];
+  const planned = pendingPlan ? others.find((p) => aliasFor(p).toLowerCase() === pendingPlan!.decoyPerson.trim().toLowerCase()) : undefined;
+  const decoyPerson = planned ?? (others.length ? others[Math.floor(Math.random() * others.length)] : target);
+  const decoyItem =
+    (planned && pendingPlan?.decoyItem) || ITEMS.filter((i) => i !== state.item)[Math.floor(Math.random() * (ITEMS.length - 1))];
   const [realBet, decoyBet] = await Promise.all([
-    writeBet(aliasFor(target), state.item),
-    writeBet(aliasFor(decoyPerson), decoyItem),
+    writeBet(aliasFor(target), state.item, pendingPlan?.reason),
+    writeBet(aliasFor(decoyPerson), decoyItem, planned ? pendingPlan?.decoyReason : undefined),
   ]);
   currentRealBet = realBet;
   console.log("[BETS]", { target: aliasFor(target), real: realBet, decoyFor: aliasFor(decoyPerson), decoy: decoyBet });
