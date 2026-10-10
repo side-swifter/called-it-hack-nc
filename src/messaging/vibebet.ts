@@ -138,9 +138,16 @@ async function handleGroupMessage(
   const botWasAdded = content.type === "addMember" && content.members.includes(botPhone);
   if (content.type === "addMember" && !botWasAdded) return;
 
+  const isBetCommand = content.type === "text" && /^\s*\/?bet\b/i.test(content.text);
+  if (state.phase !== "idle" && isBetCommand) {
+    await replyIn(space, "a bet is already live 👀 check ur dms, or say 'payday' once it happens.");
+    return;
+  }
+
   if (state.phase === "idle") {
+    if (!isBetCommand && !botWasAdded) return; // only /bet starts a game
     startReading();
-    await replyIn(space, "wsp guys 👀 called it here. lemme read the gc rq...");
+    await replyIn(space, "alr guys creating a bet 🎲 lemme read the gc rq...");
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
     let players = await groupPlayers(space, botPhone);
@@ -153,7 +160,7 @@ async function handleGroupMessage(
       return;
     }
     const target = players[Math.floor(Math.random() * players.length)];
-    openBet(aliasFor(target), space);
+    openBet(aliasFor(target), space, players);
 
     await replyIn(
       space,
@@ -297,7 +304,7 @@ async function handleDM(
     await replyIn(space, bet);
     return;
   }
-  if (state.phase === "idle" && text && /\b(start|go|bet|play)\b/i.test(text)) {
+  if (state.phase === "idle" && text && !text.startsWith("/") && /\b(start|go|bet|play)\b/i.test(text)) {
     await startDmGame(theApp!, space);
     return;
   }
@@ -337,12 +344,7 @@ async function handleDM(
 
 function wantsIn(text: string): boolean {
   const t = text.trim().toLowerCase();
-  return (
-    t === "!in" ||
-    t.includes("i'm in") ||
-    t.includes("im in") ||
-    t.includes("count me in")
-  );
+  return t.length < 60 && /(^|\s)!?(in|im in|i'm in|count me in|i'm|yes|yeah|bet)\b/.test(t) && !t.startsWith("no");
 }
 
 function wantsResolve(text: string): boolean {
