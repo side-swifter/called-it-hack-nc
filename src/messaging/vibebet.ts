@@ -1,5 +1,6 @@
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
+import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ENTRY_FEE_CHIPS, PLACEBO_BET, aliasFor } from "../vibebet/config.js";
 import { HOUSE, transfer } from "../vibebet/chips.js";
@@ -46,7 +47,10 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
   const app = await Spectrum({
     projectId: requiredEnvironmentValue("SPECTRUM_PROJECT_ID"),
     projectSecret: requiredEnvironmentValue("SPECTRUM_PROJECT_SECRET"),
-    providers: [imessage.config()],
+    providers: [
+      imessage.config(),
+      ...(process.env.TELEGRAM_BOT_TOKEN ? [telegram.config({ botToken: process.env.TELEGRAM_BOT_TOKEN })] : []),
+    ],
     options: { logLevel: "error" },
   });
 
@@ -68,14 +72,15 @@ async function consumeMessages(
   app: Awaited<ReturnType<typeof Spectrum>>,
 ): Promise<void> {
   for await (const [space, message] of app.messages) {
-    if (message.platform !== "imessage") continue;
+    if (message.platform !== "imessage" && message.platform !== "telegram") continue;
 
-    const imessageMessage = imessage(message) as {
+    const isTelegram = message.platform === "telegram";
+    const imessageMessage = (isTelegram ? {} : imessage(message)) as {
       itemType?: string;
       direction?: "inbound" | "outbound";
     };
     const text = messageText(message);
-    const imessageSpace = imessage(space);
+    const imessageSpace = { type: isGroupSpace(space, message) ? "group" : "dm" };
 
     // Skip the bot's own outbound echoes, known sent ids, and rapid-fire windows.
     if (imessageMessage.direction === "outbound") continue;
@@ -105,6 +110,17 @@ async function consumeMessages(
   }
 }
 
+function isGroupSpace(space: Space, message: Message): boolean {
+  if (message.platform === "telegram") return space.id.startsWith("-");
+  return imessage(space).type === "group";
+}
+
+// Telegram user ids are plain digits; iMessage handles are +E.164 or emails.
+async function openDm(app: Awaited<ReturnType<typeof Spectrum>>, handle: string): Promise<Space> {
+  const platform = /^\d+$/.test(handle) ? (telegram(app) as any) : (imessage(app) as any);
+  return platform.space.create(handle);
+}
+
 async function handleGroupMessage(
   app: Awaited<ReturnType<typeof Spectrum>>,
   space: Space,
@@ -112,7 +128,8 @@ async function handleGroupMessage(
   message: Message,
 ): Promise<void> {
   const state = getState();
-  const botPhone = imessage(space).phone;
+  const botPhone = message.platform === "telegram" ? "" : imessage(space).phone;
+  if (message.sender?.id) known.add(message.sender.id);
   if (text && message.sender?.id) logMessage(message.sender.id, text);
 
   // Dedicated lines deliver an "addMember" event when the bot is added; shared
@@ -165,7 +182,7 @@ async function recordProof(space: Space, message: Message): Promise<void> {
   if (!sender) return;
   const state = getState();
   const enough = addProof(sender);
-  if (imessage(space).type === "dm") {
+  if (!isGroupSpace(space, message)) {
     await replyIn(space, `got it 📸 (${state.proofs.size}/${PROOFS_NEEDED} confirmations)`);
   }
   if (enough) await announceResult();
@@ -195,10 +212,9 @@ async function announceResult(): Promise<void> {
 // Post in the group if there is one; otherwise DM every player (free shared line).
 async function say(group: Space | null, text: string, players: string[]): Promise<void> {
   if (group) return replyIn(group, text);
-  const imessageApp = imessage(theApp!) as { space: { create: (user: string) => Promise<Space> } };
   for (const h of players) {
     try {
-      await replyIn(await imessageApp.space.create(h), text);
+      await replyIn(await openDm(theApp!, h), text);
     } catch (err) {
       console.error(`Failed to DM ${h}:`, err);
     }
@@ -218,8 +234,7 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
   startReading();
   for (const h of players) {
     try {
-      const imessageApp = imessage(app) as { space: { create: (user: string) => Promise<Space> } };
-      await replyIn(await imessageApp.space.create(h), "wsp guys 👀 called it here. lemme read the gc rq...");
+      await replyIn(await openDm(app, h), "wsp guys 👀 called it here. lemme read the gc rq...");
     } catch {}
   }
   await new Promise((r) => setTimeout(r, 3000));
@@ -231,6 +246,7 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
 
 async function groupPlayers(space: Space, botPhone: string): Promise<string[]> {
   try {
+    if (space.id.startsWith("-")) return [...known]; // Telegram can't list members
     const members = await space.getMembers();
     return members.map((m) => m.id).filter((id) => id !== botPhone);
   } catch (err) {
@@ -244,14 +260,11 @@ async function sendPrivateBets(
   players: string[],
   target: string,
 ): Promise<void> {
-  const imessageApp = imessage(app) as {
-    space: { create: (user: string) => Promise<Space> };
-  };
   const realBet = await writeBet(aliasFor(target), ENTRY_FEE_CHIPS);
 
   for (const handle of players) {
     try {
-      const dmSpace = await imessageApp.space.create(handle);
+      const dmSpace = await openDm(app, handle);
       await replyIn(dmSpace, handle === target ? PLACEBO_BET : realBet);
     } catch (err) {
       console.error(`Failed to DM ${handle}:`, err);
