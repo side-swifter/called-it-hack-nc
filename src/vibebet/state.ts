@@ -11,6 +11,7 @@ export interface GameState {
   pot: number;
   proofs: Set<string>; // handles that sent proof
   groupSpace: Space | null;
+  players: string[];
 }
 
 let state: GameState = {
@@ -20,6 +21,7 @@ let state: GameState = {
   pot: 0,
   proofs: new Set(),
   groupSpace: null,
+  players: [],
 };
 
 export function getState(): GameState {
@@ -34,6 +36,7 @@ export function resetState(): void {
     pot: 0,
     proofs: new Set(),
     groupSpace: null,
+    players: [],
   };
 }
 
@@ -41,7 +44,8 @@ export function startReading(): void {
   state.phase = "reading";
 }
 
-export function openBet(targetAlias: string, groupSpace: Space): void {
+export function openBet(targetAlias: string, groupSpace: Space | null, players: string[] = []): void {
+  state.players = players;
   state.phase = "open";
   state.groupSpace = groupSpace;
   state.targetAlias = targetAlias;

@@ -50,6 +50,7 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
     options: { logLevel: "error" },
   });
 
+  theApp = app;
   const loop = consumeMessages(app);
   void loop.catch(() => undefined);
 
@@ -173,7 +174,7 @@ async function recordProof(space: Space, message: Message): Promise<void> {
 async function announceResult(): Promise<void> {
   const state = getState();
   const group = state.groupSpace;
-  if (!group || state.phase !== "open") return;
+  if (state.phase !== "open") return;
   settle();
   const target = state.targetAlias ?? "someone";
   const winners = [...state.entries.values()];
@@ -182,11 +183,50 @@ async function announceResult(): Promise<void> {
   for (const h of handles) await transfer(HOUSE, h, share);
   logOutcome(target, "red jacket", true);
   const names = winners.length ? winners.join(", ") : "nobody (nobody bet, cowards)";
-  await replyIn(
+  const players = [...state.players];
+  await say(
     group,
     `🚨 CALLED IT. ${target} really did it. ${state.proofs.size} people confirmed. ${names} split the ${state.pot}-chip pot. everyone else... pay up 💀`,
+    players,
   );
   resetState();
+}
+
+// Post in the group if there is one; otherwise DM every player (free shared line).
+async function say(group: Space | null, text: string, players: string[]): Promise<void> {
+  if (group) return replyIn(group, text);
+  const imessageApp = imessage(theApp!) as { space: { create: (user: string) => Promise<Space> } };
+  for (const h of players) {
+    try {
+      await replyIn(await imessageApp.space.create(h), text);
+    } catch (err) {
+      console.error(`Failed to DM ${h}:`, err);
+    }
+  }
+}
+
+const known = new Set<string>();
+let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
+
+// DM-only mode: everyone who texted the bot is a player.
+async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Space): Promise<void> {
+  const players = [...known];
+  if (players.length < 2) {
+    await replyIn(space, `need at least 2 ppl. get a friend to text me anything, then say "start" again. (${players.length}/2)`);
+    return;
+  }
+  startReading();
+  for (const h of players) {
+    try {
+      const imessageApp = imessage(app) as { space: { create: (user: string) => Promise<Space> } };
+      await replyIn(await imessageApp.space.create(h), "wsp guys 👀 called it here. lemme read the gc rq...");
+    } catch {}
+  }
+  await new Promise((r) => setTimeout(r, 3000));
+  const target = players[Math.floor(Math.random() * players.length)];
+  openBet(aliasFor(target), null, players);
+  await say(null, "alr the bets are on, check the next msg 👇", players);
+  await sendPrivateBets(app, players, target);
 }
 
 async function groupPlayers(space: Space, botPhone: string): Promise<string[]> {
@@ -225,6 +265,12 @@ async function handleDM(
   message: Message,
 ): Promise<void> {
   const state = getState();
+  const me = message.sender?.id;
+  if (me) known.add(me);
+  if (state.phase === "idle" && text && /\b(start|go|bet|play)\b/i.test(text)) {
+    await startDmGame(theApp!, space);
+    return;
+  }
 
   if (state.phase === "open" && message.content.type === "attachment") {
     await recordProof(space, message);
@@ -234,7 +280,7 @@ async function handleDM(
   if (state.phase === "idle" || text === undefined) {
     await replyIn(
       space,
-      "yo, called it here. add me to a group chat and i'll run a bet — anyone texts and i'll kick it off.",
+      "yo, called it here 👋 once 2+ friends have texted me, say \"start\" and i'll run a bet on one of u.",
     );
     return;
   }
