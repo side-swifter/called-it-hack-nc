@@ -164,3 +164,34 @@ export async function classifyIntent(text: string, bet?: string): Promise<Intent
   }
   return "other";
 }
+
+export interface Verdict {
+  accept: boolean;
+  reply: string;
+}
+
+// The photo isn't analyzed; the bot judges the message sent right after it, like a skeptical friend.
+export async function judgeProof(opts: { target: string; item: string; text: string; recent: string[] }): Promise<Verdict> {
+  const { target, item, text, recent } = opts;
+  const fallbackAccept = /\b(proof|here'?s|see|look|did|wearing|wore|there)\b/i.test(text) && !/\b(jk|lol|larp|fake|not)\b/i.test(text);
+  const fallback: Verdict = fallbackAccept
+    ? { accept: true, reply: "dang he acc did it 👀" }
+    : { accept: false, reply: "stop larping, that's not proof 🙄" };
+  if (!configured()) return fallback;
+  try {
+    const prompt = [
+      `You are a skeptical, funny friend judging proof for the bet "will ${target} wear ${item} today?". Someone just sent a photo and then wrote a message about it. You can't see the photo, so judge ONLY how they present it.`,
+      `ACCEPT if the message presents the photo as evidence that it happened: it says "proof", "evidence", "here's the proof", "look", "see", "he did it", "told you", or describes ${target} in ${item}. Being brief is fine. REJECT only if it's a throwaway that never claims anything ("here u go", "ok", "lol", "idk", "hi"), is clearly joking or admitting it's fake, or is unrelated to the bet.`,
+      `Chat so far:\n${recent.slice(-8).join("\n") || "(none)"}`,
+      `Their message: "${text}"`,
+      `Reply with JSON only: {"accept": true or false, "reply": "<one short lowercase text-message reply in character, max 15 words, at most one emoji; if rejecting, call them out for larping; if accepting, be impressed, like 'dang he acc did it'>"}`,
+    ].join("\n");
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
+    const raw = String(rows[0]?.R ?? "");
+    const json = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    return { accept: json.accept === true, reply: String(json.reply || fallback.reply) };
+  } catch (e) {
+    console.error("[cortex] judge failed:", (e as Error).message);
+    return fallback;
+  }
+}

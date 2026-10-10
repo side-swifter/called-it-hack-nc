@@ -9,7 +9,8 @@ export interface GameState {
   targetAlias: string | null;
   picks: Map<string, "yes" | "no">; // handle -> their bet
   item: string;
-  proofs: Set<string>; // handles that sent proof
+  proofs: Set<string>; // handles whose proof was accepted
+  photoFrom: Set<string>; // handles who sent a photo and are waiting to be judged
   groupSpace: Space | null;
   players: string[];
 }
@@ -20,6 +21,7 @@ let state: GameState = {
   picks: new Map(),
   item: "",
   proofs: new Set(),
+  photoFrom: new Set(),
   groupSpace: null,
   players: [],
 };
@@ -35,6 +37,7 @@ export function resetState(): void {
     picks: new Map(),
     item: "",
     proofs: new Set(),
+    photoFrom: new Set(),
     groupSpace: null,
     players: [],
   };

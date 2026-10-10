@@ -5,7 +5,7 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { classifyIntent, converse, warmUp, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyIntent, converse, judgeProof, warmUp, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -269,11 +269,12 @@ async function handleGroupMessage(
   }
 
   if (state.phase === "open" && content.type === "attachment") {
-    await recordProof(space, message);
+    recordPhoto(message);
     return;
   }
 
   if (text === undefined) return;
+  if (!isBetCommand && (await judgeIfPhotoPending(space, message, text))) return;
   const t = text.trim().toLowerCase();
 
   if (state.phase === "open" && wantsResolve(t)) {
@@ -281,16 +282,29 @@ async function handleGroupMessage(
   }
 }
 
-// Image understanding is faked: any photo (or "it happened") counts as proof.
-async function recordProof(space: Space, message: Message): Promise<void> {
+// A photo alone proves nothing: stay quiet and wait for the sender's next text.
+function recordPhoto(message: Message): void {
   const sender = message.sender?.id;
-  if (!sender) return;
-  const enough = addProof(sender);
-  if (!isGroupSpace(space, message)) {
-    const reaction = await reactToPhoto(getState().targetAlias ?? "someone", getState().item);
-    await replyIn(space, reaction);
+  if (sender) getState().photoFrom.add(sender);
+}
+
+// Judge the text that follows a photo. Returns true if it handled the message.
+async function judgeIfPhotoPending(space: Space, message: Message, text: string): Promise<boolean> {
+  const sender = message.sender?.id;
+  const state = getState();
+  if (!sender || state.phase !== "open" || !state.photoFrom.has(sender)) return false;
+  const verdict = await judgeProof({
+    target: state.targetAlias ?? "someone",
+    item: state.item,
+    text,
+    recent: history.get(space.id) ?? [],
+  });
+  await replyIn(space, verdict.reply);
+  if (verdict.accept) {
+    state.photoFrom.delete(sender);
+    if (addProof(sender)) await announceResult();
   }
-  if (enough) await announceResult();
+  return true;
 }
 
 async function announceResult(): Promise<void> {
@@ -481,9 +495,10 @@ async function handleDM(
   }
 
   if (state.phase === "open" && message.content.type === "attachment") {
-    await recordProof(space, message);
+    recordPhoto(message);
     return;
   }
+  if (text && !text.startsWith("/") && (await judgeIfPhotoPending(space, message, text))) return;
 
   const GREETING = "yo, called it here 👋 ur all set. go type /bet in the group chat and i'll send everyone a bet in here.";
   if (text === undefined || text.trim().startsWith("/")) {
@@ -510,14 +525,9 @@ async function handleDM(
       return;
     }
     if (intent === "proof") {
-      await recordProof(space, message);
+      await replyIn(space, "ok then send the photo first 📸");
       return;
     }
-  }
-
-  if (t.includes("proof") || t.includes("caught") || t.includes("happened")) {
-    await recordProof(space, message);
-    return;
   }
 
   await smartReply(
