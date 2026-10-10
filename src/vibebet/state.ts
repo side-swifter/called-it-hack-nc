@@ -1,14 +1,14 @@
 import type { Space } from "spectrum-ts";
 
-export const PROOFS_NEEDED = 2;
+export const PROOFS_NEEDED = 1;
 
 export type GamePhase = "idle" | "reading" | "open" | "settled";
 
 export interface GameState {
   phase: GamePhase;
   targetAlias: string | null;
-  entries: Map<string, string>; // handle -> alias
-  pot: number;
+  picks: Map<string, "yes" | "no">; // handle -> their bet
+  item: string;
   proofs: Set<string>; // handles that sent proof
   groupSpace: Space | null;
   players: string[];
@@ -17,8 +17,8 @@ export interface GameState {
 let state: GameState = {
   phase: "idle",
   targetAlias: null,
-  entries: new Map(),
-  pot: 0,
+  picks: new Map(),
+  item: "",
   proofs: new Set(),
   groupSpace: null,
   players: [],
@@ -32,8 +32,8 @@ export function resetState(): void {
   state = {
     phase: "idle",
     targetAlias: null,
-    entries: new Map(),
-    pot: 0,
+    picks: new Map(),
+    item: "",
     proofs: new Set(),
     groupSpace: null,
     players: [],
@@ -44,17 +44,17 @@ export function startReading(): void {
   state.phase = "reading";
 }
 
-export function openBet(targetAlias: string, groupSpace: Space | null, players: string[] = []): void {
+export function openBet(targetAlias: string, item: string, groupSpace: Space | null, players: string[] = []): void {
+  state.item = item;
   state.players = players;
   state.phase = "open";
   state.groupSpace = groupSpace;
   state.targetAlias = targetAlias;
 }
 
-export function enter(handle: string, alias: string): void {
-  if (state.phase !== "open" || state.entries.has(handle)) return;
-  state.entries.set(handle, alias);
-  state.pot += 2;
+export function pick(handle: string, side: "yes" | "no"): void {
+  if (state.phase !== "open") return;
+  state.picks.set(handle, side);
 }
 
 export function settle(): void {

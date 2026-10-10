@@ -68,17 +68,40 @@ async function historyFor(target: string): Promise<[number, number]> {
   return SEED[target];
 }
 
-export async function writeBet(target: string, entryFee: number): Promise<string> {
+export async function writeBet(target: string, item: string): Promise<string> {
   const [hits, total] = await historyFor(target);
-  const fallback = `🎯 the bet: will ${target} show up in a red jacket today? history says ${hits}/${total}. reply "in" to throw ${entryFee} chips in. winner takes the pot.`;
+  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no".`;
   if (!configured()) return fallback;
   try {
-    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 35 words, lowercase, one emoji) asking whether ${target} will wear a red jacket today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "in" to throw ${entryFee} chips in. Output only the message.`;
+    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no". Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', ?) AS R", [prompt]);
     const text = String(rows[0]?.R ?? "").trim();
     return text || fallback;
   } catch (e) {
     console.error("[cortex] failed:", (e as Error).message);
     return fallback;
+  }
+}
+
+const CANNED = [
+  "ok i see u 👀 certified fit",
+  "hmm suspicious but i'll allow it",
+  "that lighting is doing a lot of work rn",
+  "evidence received. the committee is deliberating 🧑‍⚖️",
+  "bold choice. very bold.",
+  "not me zooming in on this for 10 minutes",
+];
+
+// Cortex writes the banter. The photo itself isn't analyzed (faked for the demo).
+export async function reactToPhoto(target: string, item: string): Promise<string> {
+  const canned = CANNED[Math.floor(Math.random() * CANNED.length)];
+  if (!configured()) return canned;
+  try {
+    const prompt = `You are a playful, slightly snarky friend in a group chat. Someone just sent a proof photo for the bet "will ${target} wear ${item} today". React in ONE short lowercase sentence with one emoji, like you studied the photo. Output only the message.`;
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large2', ?) AS R", [prompt]);
+    return String(rows[0]?.R ?? "").trim() || canned;
+  } catch (e) {
+    console.error("[cortex] reaction failed:", (e as Error).message);
+    return canned;
   }
 }

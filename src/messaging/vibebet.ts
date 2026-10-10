@@ -3,11 +3,10 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
-import { ENTRY_FEE_CHIPS, NAMES, PLACEBO_BET, aliasFor } from "../vibebet/config.js";
-import { HOUSE, transfer } from "../vibebet/chips.js";
-import { logMessage, logOutcome, writeBet } from "../vibebet/brain.js";
+import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
+import { logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
-  enter,
+  pick,
   getState,
   openBet,
   resetState,
@@ -201,7 +200,8 @@ async function handleGroupMessage(
       return;
     }
     const target = players[Math.floor(Math.random() * players.length)];
-    openBet(aliasFor(target), space, players);
+    const item = ITEMS[Math.floor(Math.random() * ITEMS.length)];
+    openBet(aliasFor(target), item, space, players);
 
     await replyIn(
       space,
@@ -228,10 +228,10 @@ async function handleGroupMessage(
 async function recordProof(space: Space, message: Message): Promise<void> {
   const sender = message.sender?.id;
   if (!sender) return;
-  const state = getState();
   const enough = addProof(sender);
   if (!isGroupSpace(space, message)) {
-    await replyIn(space, `got it 📸 (${state.proofs.size}/${PROOFS_NEEDED} confirmations)`);
+    const reaction = await reactToPhoto(getState().targetAlias ?? "someone", getState().item);
+    await replyIn(space, reaction);
   }
   if (enough) await announceResult();
 }
@@ -242,16 +242,15 @@ async function announceResult(): Promise<void> {
   if (state.phase !== "open") return;
   settle();
   const target = state.targetAlias ?? "someone";
-  const winners = [...state.entries.values()];
-  const handles = [...state.entries.keys()];
-  const share = handles.length ? Math.floor(state.pot / handles.length) : 0;
-  for (const h of handles) await transfer(HOUSE, h, share);
-  logOutcome(target, "red jacket", true);
-  const names = winners.length ? winners.join(", ") : "nobody (nobody bet, cowards)";
+  const winners = [...state.picks].filter(([, side]) => side === "yes").map(([h]) => aliasFor(h));
+  const losers = [...state.picks].filter(([, side]) => side === "no").map(([h]) => aliasFor(h));
+  logOutcome(target, state.item, true);
   const players = [...state.players];
   await say(
     group,
-    `🚨 CALLED IT. ${target} really did it. ${state.proofs.size} people confirmed. ${names} split the ${state.pot}-chip pot. everyone else... pay up 💀`,
+    `🚨 ${target} CALLED IT. ${state.item} confirmed 📸\n` +
+      (winners.length ? `w for ${winners.join(", ")} 🏆\n` : "nobody bet yes lol\n") +
+      (losers.length ? `L for ${losers.join(", ")} 💀` : ""),
     players,
   );
   pendingBets.clear();
@@ -306,7 +305,7 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
   }
   await new Promise((r) => setTimeout(r, 3000));
   const target = players[Math.floor(Math.random() * players.length)];
-  openBet(aliasFor(target), null, players);
+  openBet(aliasFor(target), ITEMS[Math.floor(Math.random() * ITEMS.length)], null, players);
   await say(null, "alr the bets are on, check the next msg 👇", players);
   await sendPrivateBets(app, players, target);
 }
@@ -327,10 +326,16 @@ async function sendPrivateBets(
   players: string[],
   target: string,
 ): Promise<void> {
-  const realBet = await writeBet(aliasFor(target), ENTRY_FEE_CHIPS);
+  const state = getState();
+  const realBet = await writeBet(aliasFor(target), state.item);
+  // Decoy: the target gets a bet about someone else, same format, so it looks real.
+  const others = players.filter((p) => p !== target);
+  const decoyPerson = others.length ? others[Math.floor(Math.random() * others.length)] : target;
+  const decoyItem = ITEMS.filter((i) => i !== state.item)[Math.floor(Math.random() * (ITEMS.length - 1))];
+  const decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem);
 
   for (const handle of players) {
-    const bet = handle === target ? PLACEBO_BET : realBet;
+    const bet = handle === target ? decoyBet : realBet;
     try {
       const dmSpace = await openDm(app, handle);
       await replyIn(dmSpace, bet);
@@ -382,13 +387,11 @@ async function handleDM(
 
   const t = text.trim().toLowerCase();
 
-  if (state.phase === "open" && wantsIn(t)) {
+  if (state.phase === "open" && (wantsYes(t) || wantsNo(t))) {
     const senderId = message.sender?.id;
     if (!senderId) return;
-    const before = state.entries.size;
-    enter(senderId, aliasFor(senderId));
-    if (state.entries.size > before) await transfer(senderId, HOUSE, ENTRY_FEE_CHIPS);
-    await replyIn(space, `You're in. Pot is now ${state.pot} chips.`);
+    pick(senderId, wantsYes(t) ? "yes" : "no");
+    await replyIn(space, wantsYes(t) ? "locked in: yes 🔒" : "locked in: no 🔒");
     return;
   }
 
@@ -397,12 +400,15 @@ async function handleDM(
     return;
   }
 
-  await replyIn(space, "bet is open — reply 'in' to enter, or send proof when it happens.");
+  await replyIn(space, "reply yes or no on the bet, or send a photo as proof when it happens.");
 }
 
-function wantsIn(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  return t.length < 60 && /(^|\s)!?(in|im in|i'm in|count me in|i'm|yes|yeah|bet)\b/.test(t) && !t.startsWith("no");
+function wantsYes(text: string): boolean {
+  return text.length < 60 && /(^|\s)(yes|yeah|yep|in|im in|i'm in|bet)\b/.test(text) && !wantsNo(text);
+}
+
+function wantsNo(text: string): boolean {
+  return text.length < 60 && /^(no|nope|nah|never|out)\b/.test(text);
 }
 
 function wantsResolve(text: string): boolean {

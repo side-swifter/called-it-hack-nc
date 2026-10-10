@@ -14,11 +14,11 @@ export function aliasFor(handle: string): string {
   return NAMES.get(handle) ?? ROSTER.find((p) => p.handle === handle)?.alias ?? `…${handle.replace(/\D/g, "").slice(-4)}`;
 }
 
-export function realBetFor(targetAlias: string): string {
-  return `🎯 the bet: will ${targetAlias} show up in a red jacket today? reply "in" to throw 2 chips in. winner takes the pot.`;
-}
-
-export const PLACEBO_BET =
-  `🎯 the bet: will someone say "you too" to a waiter today? reply "in" to throw 2 chips in. winner takes the pot.`;
-
-export const ENTRY_FEE_CHIPS = 2;
+export const ITEMS = [
+  "a red jacket",
+  "a black t-shirt",
+  "a white hoodie",
+  "a blue shirt",
+  "a green jacket",
+  "a gray sweatshirt",
+];
