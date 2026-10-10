@@ -139,16 +139,20 @@ async function handleGroupMessage(
   if (content.type === "addMember" && !botWasAdded) return;
 
   const isBetCommand = content.type === "text" && /^\s*\/?bet\b/i.test(content.text);
-  if (state.phase !== "idle" && isBetCommand) {
-    await replyIn(space, "a bet is already live 👀 check ur dms, or say 'payday' once it happens.");
-    return;
+  // /bet always starts a fresh game, dropping whatever was running.
+  if (isBetCommand) {
+    resetState();
+    pendingBets.clear();
+    gameGen++;
   }
+  const myGame = gameGen;
 
-  if (state.phase === "idle") {
+  if (getState().phase === "idle") {
     if (!isBetCommand && !botWasAdded) return; // only /bet starts a game
     startReading();
     await replyIn(space, "alr guys creating a bet 🎲 lemme read the gc rq...");
     await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (myGame !== gameGen) return; // a newer /bet replaced this one
 
     let players = await groupPlayers(space, botPhone);
     // If member lookup fails (shared line), fall back to whoever just spoke.
@@ -231,6 +235,7 @@ async function say(group: Space | null, text: string, players: string[]): Promis
 
 const known = new Set<string>();
 const pendingBets = new Map<string, string>();
+let gameGen = 0;
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
 
 // DM-only mode: everyone who texted the bot is a player.
