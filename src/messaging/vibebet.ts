@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
@@ -129,7 +130,7 @@ async function handleGroupMessage(
 ): Promise<void> {
   const state = getState();
   const botPhone = message.platform === "telegram" ? "" : imessage(space).phone;
-  if (message.sender?.id) known.add(message.sender.id);
+  if (message.sender?.id) remember(message.sender.id);
   if (text && message.sender?.id) logMessage(message.sender.id, text);
 
   // Dedicated lines deliver an "addMember" event when the bot is added; shared
@@ -233,7 +234,23 @@ async function say(group: Space | null, text: string, players: string[]): Promis
   }
 }
 
-const known = new Set<string>();
+const KNOWN_FILE = ".known-players.json";
+const known = new Set<string>(
+  (() => {
+    try {
+      return JSON.parse(readFileSync(KNOWN_FILE, "utf8")) as string[];
+    } catch {
+      return [];
+    }
+  })(),
+);
+function remember(id: string): void {
+  if (known.has(id)) return;
+  known.add(id);
+  try {
+    writeFileSync(KNOWN_FILE, JSON.stringify([...known]));
+  } catch {}
+}
 const pendingBets = new Map<string, string>();
 let gameGen = 0;
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
@@ -302,7 +319,7 @@ async function handleDM(
 ): Promise<void> {
   const state = getState();
   const me = message.sender?.id;
-  if (me) known.add(me);
+  if (me) remember(me);
   if (me && pendingBets.has(me)) {
     const bet = pendingBets.get(me)!;
     pendingBets.delete(me);
