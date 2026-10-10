@@ -5,7 +5,7 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { converse, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -36,7 +36,18 @@ function messageText(message: Message): string | undefined {
 const sentMessageIds = new Set<string>();
 const lastReplyAt = new Map<string, number>();
 
+const history = new Map<string, string[]>();
+function note(spaceId: string, line: string): void {
+  const h = history.get(spaceId) ?? [];
+  h.push(line.slice(0, 300));
+  if (h.length > 30) h.shift();
+  history.set(spaceId, h);
+}
+
+const betsSent = new Map<string, string>();
+
 async function replyIn(space: Space, text: string): Promise<void> {
+  note(space.id, `bot: ${text}`);
   const sent = await space.send(text);
   lastReplyAt.set(space.id, Date.now());
   if (sent?.id) {
@@ -99,6 +110,8 @@ async function consumeMessages(
       itemType: imessageMessage.itemType,
     });
 
+    if (text && message.sender?.id) note(space.id, `${aliasFor(message.sender.id)}: ${text}`);
+
     try {
       if (imessageSpace.type === "group") {
         await handleGroupMessage(app, space, text, message);
@@ -145,6 +158,25 @@ async function resolveNames(chatId: string, ids: string[]): Promise<void> {
   );
 }
 
+// Dynamic reply via Snowflake Cortex; falls back to a canned line.
+async function smartReply(space: Space, message: Message, text: string, fallback: string, myBet?: string): Promise<void> {
+  const sender = message.sender?.id;
+  if (sender && /^\d+$/.test(sender) && !NAMES.has(sender)) {
+    const chat = await tgApi("getChat", { chat_id: sender });
+    if (chat?.first_name) NAMES.set(sender, chat.first_name);
+  }
+  const reply = await converse({
+    name: sender ? aliasFor(sender) : "someone",
+    text,
+    where: isGroupSpace(space, message) ? "group" : "dm",
+    phase: getState().phase,
+    item: getState().item,
+    myBet,
+    recent: history.get(space.id) ?? [],
+  });
+  await replyIn(space, reply ?? fallback);
+}
+
 async function handleGroupMessage(
   app: Awaited<ReturnType<typeof Spectrum>>,
   space: Space,
@@ -175,6 +207,11 @@ async function handleGroupMessage(
     gameGen++;
   }
   const myGame = gameGen;
+
+  if (!isBetCommand && text && /called.?it|@called_it_ai_bot|\bbot\b/i.test(text)) {
+    await smartReply(space, message, text, "i'm here 👀 type /bet to start a bet");
+    return;
+  }
 
   if (getState().phase === "idle") {
     if (!isBetCommand && !botWasAdded) return; // only /bet starts a game
@@ -360,6 +397,7 @@ async function sendPrivateBets(
 
   for (const handle of players) {
     const bet = handle === target ? decoyBet : realBet;
+    betsSent.set(handle, bet);
     try {
       const dmSpace = await openDm(app, handle);
       await replyIn(dmSpace, bet);
@@ -405,11 +443,13 @@ async function handleDM(
     return;
   }
 
-  if (state.phase === "idle" || text === undefined) {
-    await replyIn(
-      space,
-      "yo, called it here 👋 ur all set. go type /bet in the group chat and i'll send everyone a bet in here.",
-    );
+  const GREETING = "yo, called it here 👋 ur all set. go type /bet in the group chat and i'll send everyone a bet in here.";
+  if (text === undefined || text.trim().startsWith("/")) {
+    await replyIn(space, GREETING);
+    return;
+  }
+  if (state.phase === "idle") {
+    await smartReply(space, message, text, GREETING);
     return;
   }
 
@@ -433,7 +473,13 @@ async function handleDM(
     return;
   }
 
-  await replyIn(space, "reply yes or no on the bet (5 chips), or send a photo as proof when it happens.");
+  await smartReply(
+    space,
+    message,
+    text,
+    "reply yes or no on the bet (5 chips), or send a photo as proof when it happens.",
+    message.sender?.id ? betsSent.get(message.sender.id) : undefined,
+  );
 }
 
 function wantsYes(text: string): boolean {

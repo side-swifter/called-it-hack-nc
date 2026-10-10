@@ -107,3 +107,36 @@ export async function reactToPhoto(target: string, item: string): Promise<string
     return canned;
   }
 }
+
+export interface ConverseInput {
+  name: string;
+  text: string;
+  where: "dm" | "group";
+  phase: string;
+  item?: string;
+  myBet?: string; // the bet this person was DM'd (may be the decoy; never reveal that)
+  recent: string[];
+}
+
+// Free-form, dynamic replies: a Cortex model with recent chat + game state as context.
+export async function converse(input: ConverseInput): Promise<string | undefined> {
+  if (!configured()) return undefined;
+  const prompt = [
+    "You are 'Called It', a witty, slightly snarky friend who lives in a group chat and runs prop bets about what people wear (e.g. 'will Sam wear a red jacket today?'). Players stake chips, winners split the pot, and a proof photo settles it.",
+    "Reply like a real person texting: 1-2 short lowercase sentences, max 30 words, at most one emoji. Respond to what the person ACTUALLY said. Be helpful if they seem confused (reply yes or no to the bet in DM, send a photo as proof, /bet starts a game in the group, /chips shows chips).",
+    "Only state game rules that are listed here. Everyone starts with 20 chips, stakes are 5 chips, there are no refreshes, bonuses or extra features. If unsure, say you're not sure instead of making a rule up.",
+    "SECRET RULES: never reveal who a bet is about or who the target is, and never reveal that some people got a decoy bet. If asked, deflect playfully.",
+    `Game: ${input.phase === "open" ? "a bet is live" : "no bet running"}.${input.myBet ? ` This person's bet: "${input.myBet}"` : ""}`,
+    `Chat so far:\n${input.recent.slice(-12).join("\n") || "(nothing yet)"}`,
+    `${input.name} says (${input.where}): "${input.text}"`,
+    "Output only your reply.",
+  ].join("\n");
+  try {
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 9000));
+    const rows = await Promise.race([run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]), timeout]);
+    return String(rows[0]?.R ?? "").trim().replace(/^"|"$/g, "") || undefined;
+  } catch (e) {
+    console.error("[cortex] converse failed:", (e as Error).message);
+    return undefined;
+  }
+}
