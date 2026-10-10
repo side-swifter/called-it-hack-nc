@@ -2,7 +2,7 @@
 // local balances are always updated first so the demo never waits on the API.
 const BASE = "https://api.nessieisreal.com";
 const balances = new Map<string, number>();
-const accountIds = new Map<string, string>(); // handle -> nessie account id
+const accountIds = new Map<string, Promise<string>>(); // handle -> nessie account id
 const START_CHIPS = 20;
 
 function key(): string | undefined {
@@ -17,28 +17,33 @@ async function nessie(method: string, path: string, body?: unknown): Promise<any
     headers: { "content-type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`Nessie ${method} ${path.split("/")[1]} failed (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Nessie ${method} ${path.split("/").pop()} failed (HTTP ${res.status}) ${(await res.text()).slice(0, 120)}`);
   return res.json();
 }
 
-async function ensureAccount(handle: string): Promise<string | undefined> {
-  if (!key()) return undefined;
-  if (accountIds.has(handle)) return accountIds.get(handle);
+async function createAccount(handle: string): Promise<string> {
   const cust = await nessie("POST", "/customers", {
     first_name: "Chip",
     last_name: handle.replace(/\D/g, "").slice(-6) || "House",
     address: { street_number: "1", street_name: "Main St", city: "Durham", state: "NC", zip: "27701" },
   });
-  const customerId = cust.objectCreated?._id;
-  const acct = await nessie("POST", `/customers/${customerId}/accounts`, {
+  const acct = await nessie("POST", `/customers/${cust.objectCreated?._id}/accounts`, {
     type: "Checking",
-    nickname: `chips-${handle.slice(-4)}`,
+    nickname: `called-it-${handle.slice(-4)}`,
     rewards: 0,
     balance: START_CHIPS,
   });
-  const id = acct.objectCreated?._id as string;
-  accountIds.set(handle, id);
-  return id;
+  return acct.objectCreated?._id as string;
+}
+
+function ensureAccount(handle: string): Promise<string | undefined> {
+  if (!key()) return Promise.resolve(undefined);
+  if (!accountIds.has(handle)) {
+    const p = createAccount(handle);
+    p.catch(() => accountIds.delete(handle)); // allow retry after a failure
+    accountIds.set(handle, p);
+  }
+  return accountIds.get(handle)!;
 }
 
 export function balanceOf(handle: string): number {
@@ -46,10 +51,22 @@ export function balanceOf(handle: string): number {
   return balances.get(handle)!;
 }
 
+// This Nessie has no payee transfers, so a transfer = withdrawal + deposit.
 async function mirror(from: string, to: string, amount: number): Promise<void> {
   try {
     const [a, b] = await Promise.all([ensureAccount(from), ensureAccount(to)]);
-    if (a && b) await nessie("POST", `/accounts/${a}/transfers`, { medium: "balance", payee_id: b, amount });
+    if (!a || !b) return;
+    const body = {
+      medium: "balance",
+      transaction_date: new Date().toISOString().slice(0, 10),
+      status: "pending",
+      amount,
+      description: "called it stake",
+    };
+    await Promise.all([
+      nessie("POST", `/accounts/${a}/withdrawals`, body),
+      nessie("POST", `/accounts/${b}/deposits`, body),
+    ]);
   } catch (err) {
     console.error("[nessie] transfer skipped:", (err as Error).message);
   }
