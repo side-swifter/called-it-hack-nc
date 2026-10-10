@@ -72,10 +72,10 @@ async function historyFor(target: string): Promise<[number, number]> {
 
 export async function writeBet(target: string, item: string): Promise<string> {
   const [hits, total] = await historyFor(target);
-  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no".`;
+  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no" ($5 stake).`;
   if (!configured()) return fallback;
   try {
-    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no". Output only the message.`;
+    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no" ($5 stake). Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]);
     const text = String(rows[0]?.R ?? "").trim();
     return text || fallback;

@@ -4,6 +4,7 @@ import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
+import { HOUSE, balanceOf, transfer } from "../vibebet/chips.js";
 import { logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
@@ -242,15 +243,20 @@ async function announceResult(): Promise<void> {
   if (state.phase !== "open") return;
   settle();
   const target = state.targetAlias ?? "someone";
-  const winners = [...state.picks].filter(([, side]) => side === "yes").map(([h]) => aliasFor(h));
-  const losers = [...state.picks].filter(([, side]) => side === "no").map(([h]) => aliasFor(h));
+  const winnerIds = [...state.picks].filter(([, side]) => side === "yes").map(([h]) => h);
+  const loserIds = [...state.picks].filter(([, side]) => side === "no").map(([h]) => h);
+  const winners = winnerIds.map(aliasFor);
+  const losers = loserIds.map(aliasFor);
+  // Winners get their stake back plus an equal split of the losers' stakes.
+  const bonus = winnerIds.length ? (loserIds.length * STAKE) / winnerIds.length : 0;
+  for (const h of winnerIds) await transfer(HOUSE, h, STAKE + bonus);
   logOutcome(target, state.item, true);
   const players = [...state.players];
   await say(
     group,
     `🚨 ${target} CALLED IT. ${state.item} confirmed 📸\n` +
-      (winners.length ? `w for ${winners.join(", ")} 🏆\n` : "nobody bet yes lol\n") +
-      (losers.length ? `L for ${losers.join(", ")} 💀` : ""),
+      (winners.length ? `w for ${winners.join(", ")} 🏆 +$${bonus} each\n` : "nobody bet yes lol\n") +
+      (losers.length ? `L for ${losers.join(", ")} 💀 -$${STAKE} each` : ""),
     players,
   );
   pendingBets.clear();
@@ -286,6 +292,7 @@ function remember(id: string): void {
     writeFileSync(KNOWN_FILE, JSON.stringify([...known]));
   } catch {}
 }
+const STAKE = 5;
 const pendingBets = new Map<string, string>();
 let gameGen = 0;
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
@@ -390,8 +397,13 @@ async function handleDM(
   if (state.phase === "open" && (wantsYes(t) || wantsNo(t))) {
     const senderId = message.sender?.id;
     if (!senderId) return;
+    const firstTime = !state.picks.has(senderId);
     pick(senderId, wantsYes(t) ? "yes" : "no");
-    await replyIn(space, wantsYes(t) ? "locked in: yes 🔒" : "locked in: no 🔒");
+    if (firstTime) await transfer(senderId, HOUSE, STAKE);
+    await replyIn(
+      space,
+      `locked in: ${wantsYes(t) ? "yes" : "no"} 🔒 $${STAKE} staked (balance $${balanceOf(senderId)})`,
+    );
     return;
   }
 
@@ -400,7 +412,7 @@ async function handleDM(
     return;
   }
 
-  await replyIn(space, "reply yes or no on the bet, or send a photo as proof when it happens.");
+  await replyIn(space, "reply yes or no on the bet ($5 stake), or send a photo as proof when it happens.");
 }
 
 function wantsYes(text: string): boolean {
