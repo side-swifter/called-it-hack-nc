@@ -4,7 +4,7 @@ import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
-import { HOUSE, balanceOf, transfer } from "../vibebet/chips.js";
+import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
 import { logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
@@ -162,6 +162,11 @@ async function handleGroupMessage(
   const botWasAdded = content.type === "addMember" && content.members.includes(botPhone);
   if (content.type === "addMember" && !botWasAdded) return;
 
+  if (text && /^\s*\/?(chips|balance|bank)\b/i.test(text)) {
+    await replyIn(space, standings());
+    return;
+  }
+
   const isBetCommand = content.type === "text" && /^\s*\/?bet\b/i.test(content.text);
   // /bet always starts a fresh game, dropping whatever was running.
   if (isBetCommand) {
@@ -247,16 +252,23 @@ async function announceResult(): Promise<void> {
   const loserIds = [...state.picks].filter(([, side]) => side === "no").map(([h]) => h);
   const winners = winnerIds.map(aliasFor);
   const losers = loserIds.map(aliasFor);
-  // Winners get their stake back plus an equal split of the losers' stakes.
-  const bonus = winnerIds.length ? (loserIds.length * STAKE) / winnerIds.length : 0;
-  for (const h of winnerIds) await transfer(HOUSE, h, STAKE + bonus);
+  // Everyone's stakes are in the pot. Winners split it; if nobody won, everyone is refunded.
+  const potSize = state.picks.size * STAKE;
+  const bonus = winnerIds.length ? Math.floor(potSize / winnerIds.length) : 0;
+  if (winnerIds.length) {
+    for (const h of winnerIds) await transfer(POT, h, bonus);
+  } else {
+    for (const h of loserIds) await transfer(POT, h, STAKE);
+  }
   logOutcome(target, state.item, true);
   const players = [...state.players];
   await say(
     group,
     `🚨 ${target} CALLED IT. ${state.item} confirmed 📸\n` +
-      (winners.length ? `w for ${winners.join(", ")} 🏆 +$${bonus} each\n` : "nobody bet yes lol\n") +
-      (losers.length ? `L for ${losers.join(", ")} 💀 -$${STAKE} each` : ""),
+      (winners.length ? `w for ${winners.join(", ")} 🏆 +${bonus} chips each\n` : "nobody bet yes lol, everyone gets their chips back\n") +
+      (losers.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
+      `pot was ${potSize} chips.\n🏦 ` +
+      leaderboard([...state.picks.keys()]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · "),
     players,
   );
   pendingBets.clear();
@@ -293,6 +305,11 @@ function remember(id: string): void {
   } catch {}
 }
 const STAKE = 5;
+
+function standings(): string {
+  const rows = leaderboard([...known]).map(([h, c], i) => `${i + 1}. ${aliasFor(h)} — ${c} chips`);
+  return rows.length ? `🏦 chip leaderboard\n${rows.join("\n")}` : "nobody has chips yet, type /bet";
+}
 const pendingBets = new Map<string, string>();
 let gameGen = 0;
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
@@ -374,6 +391,10 @@ async function handleDM(
     await replyIn(space, bet);
     return;
   }
+  if (text && /^\s*\/?(chips|balance|bank)\b/i.test(text)) {
+    await replyIn(space, standings());
+    return;
+  }
   if (state.phase === "idle" && text && !text.startsWith("/") && /\b(start|go|bet|play)\b/i.test(text)) {
     await startDmGame(theApp!, space);
     return;
@@ -399,10 +420,10 @@ async function handleDM(
     if (!senderId) return;
     const firstTime = !state.picks.has(senderId);
     pick(senderId, wantsYes(t) ? "yes" : "no");
-    if (firstTime) await transfer(senderId, HOUSE, STAKE);
+    if (firstTime) await transfer(senderId, POT, STAKE);
     await replyIn(
       space,
-      `locked in: ${wantsYes(t) ? "yes" : "no"} 🔒 $${STAKE} staked (balance $${balanceOf(senderId)})`,
+      `locked in: ${wantsYes(t) ? "yes" : "no"} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(senderId)})`,
     );
     return;
   }
@@ -412,7 +433,7 @@ async function handleDM(
     return;
   }
 
-  await replyIn(space, "reply yes or no on the bet ($5 stake), or send a photo as proof when it happens.");
+  await replyIn(space, "reply yes or no on the bet (5 chips), or send a photo as proof when it happens.");
 }
 
 function wantsYes(text: string): boolean {

@@ -1,7 +1,22 @@
+import { readFileSync, writeFileSync } from "node:fs";
 // Play-chip ledger. Uses Capital One Nessie (sandbox) when NESSIE_API_KEY is set;
 // local balances are always updated first so the demo never waits on the API.
 const BASE = "https://api.nessieisreal.com";
-const balances = new Map<string, number>();
+const BAL_FILE = ".chips.json";
+const balances = new Map<string, number>(
+  (() => {
+    try {
+      return Object.entries(JSON.parse(readFileSync(BAL_FILE, "utf8")) as Record<string, number>);
+    } catch {
+      return [];
+    }
+  })(),
+);
+function save(): void {
+  try {
+    writeFileSync(BAL_FILE, JSON.stringify(Object.fromEntries(balances)));
+  } catch {}
+}
 const accountIds = new Map<string, Promise<string>>(); // handle -> nessie account id
 const START_CHIPS = 20;
 
@@ -47,7 +62,7 @@ function ensureAccount(handle: string): Promise<string | undefined> {
 }
 
 export function balanceOf(handle: string): number {
-  if (!balances.has(handle)) balances.set(handle, START_CHIPS);
+  if (!balances.has(handle)) balances.set(handle, handle === POT ? 0 : START_CHIPS);
   return balances.get(handle)!;
 }
 
@@ -72,10 +87,16 @@ async function mirror(from: string, to: string, amount: number): Promise<void> {
   }
 }
 
-export const HOUSE = "house";
+// Stakes go into the pot; winners are paid out of it. Balances persist across restarts.
+export const POT = "pot";
 
 export async function transfer(from: string, to: string, amount: number): Promise<void> {
-  balances.set(from, (from === HOUSE ? (balances.get(HOUSE) ?? 1000) : balanceOf(from)) - amount);
-  balances.set(to, (to === HOUSE ? (balances.get(HOUSE) ?? 1000) : balanceOf(to)) + amount);
+  balances.set(from, (balances.get(from) ?? (from === POT ? 0 : START_CHIPS)) - amount);
+  balances.set(to, (balances.get(to) ?? (to === POT ? 0 : START_CHIPS)) + amount);
+  save();
   void mirror(from, to, amount);
+}
+
+export function leaderboard(handles: string[]): [string, number][] {
+  return handles.map((h) => [h, balanceOf(h)] as [string, number]).sort((a, b) => b[1] - a[1]);
 }
