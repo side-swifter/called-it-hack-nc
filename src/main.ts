@@ -8,6 +8,7 @@ async function main(): Promise<void> {
     if (stopping) return;
     stopping = true;
     await messaging.stop().catch(() => undefined);
+    process.exit(0);
   };
 
   process.once("SIGINT", () => void stop());

@@ -4,6 +4,7 @@ import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
+import { recordResult, startApi } from "../vibebet/api.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
 import { classifyIntent, converse, judgeProof, logChat, planBets, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
@@ -68,6 +69,7 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
 
   theApp = app;
   warmUp();
+  startApi(() => [...known]);
   const loop = consumeMessages(app);
   void loop.catch(() => undefined);
 
@@ -337,6 +339,7 @@ async function announceResult(): Promise<void> {
     for (const h of loserIds) await transfer(POT, h, STAKE);
   }
   logOutcome(target, state.item, true);
+  recordResult({ target, item: state.item, winners, losers, pot: potSize });
   const players = [...state.players];
   await say(
     group,

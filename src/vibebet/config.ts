@@ -8,7 +8,22 @@ export interface Player {
 // they just show up by the last 4 digits of their number.
 export const ROSTER: Player[] = [{ alias: "Akshay", handle: "+19843303521" }];
 
-export const NAMES = new Map<string, string>();
+import { readFileSync, writeFileSync } from "node:fs";
+
+export const NAMES = new Map<string, string>(
+  (() => {
+    try {
+      return Object.entries(JSON.parse(readFileSync(".names.json", "utf8")) as Record<string, string>);
+    } catch {
+      return [];
+    }
+  })(),
+);
+export function saveNames(): void {
+  try {
+    writeFileSync(".names.json", JSON.stringify(Object.fromEntries(NAMES)));
+  } catch {}
+}
 
 export function aliasFor(handle: string): string {
   return NAMES.get(handle) ?? ROSTER.find((p) => p.handle === handle)?.alias ?? `…${handle.replace(/\D/g, "").slice(-4)}`;

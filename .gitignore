@@ -8,3 +8,5 @@ coverage/
 .known-players.json
 ig.csv
 .chips.json
+.names.json
+.groups.json

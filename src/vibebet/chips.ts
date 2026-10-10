@@ -100,3 +100,7 @@ export async function transfer(from: string, to: string, amount: number): Promis
 export function leaderboard(handles: string[]): [string, number][] {
   return handles.map((h) => [h, balanceOf(h)] as [string, number]).sort((a, b) => b[1] - a[1]);
 }
+
+export function allBalances(): [string, number][] {
+  return [...balances].filter(([h]) => h !== POT).sort((a, b) => b[1] - a[1]);
+}
