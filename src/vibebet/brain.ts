@@ -72,11 +72,11 @@ async function historyFor(target: string): Promise<[number, number]> {
 
 export async function writeBet(target: string, item: string): Promise<string> {
   const [hits, total] = await historyFor(target);
-  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no" ($5 stake).`;
+  const fallback = `🎯 new bet: will ${target} wear ${item} today? history says ${hits}/${total}. reply "yes" or "no" (5 chips).`;
   if (!configured()) return fallback;
   try {
-    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no" ($5 stake). Output only the message.`;
-    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]);
+    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will wear ${item} today. Mention their history: it happened ${hits} of the last ${total} times. End with: reply "yes" or "no" (5 chips). Output only the message.`;
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     const text = String(rows[0]?.R ?? "").trim();
     return text || fallback;
   } catch (e) {
@@ -100,7 +100,7 @@ export async function reactToPhoto(target: string, item: string): Promise<string
   if (!configured()) return canned;
   try {
     const prompt = `You are a playful, slightly snarky friend in a group chat. Someone just sent a proof photo for the bet "will ${target} wear ${item} today". React in ONE short lowercase sentence with one emoji, like you studied the photo. Output only the message.`;
-    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]);
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     return String(rows[0]?.R ?? "").trim() || canned;
   } catch (e) {
     console.error("[cortex] reaction failed:", (e as Error).message);
@@ -133,10 +133,34 @@ export async function converse(input: ConverseInput): Promise<string | undefined
   ].join("\n");
   try {
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 9000));
-    const rows = await Promise.race([run("SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', ?) AS R", [prompt]), timeout]);
+    const rows = await Promise.race([run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]), timeout]);
     return String(rows[0]?.R ?? "").trim().replace(/^"|"$/g, "") || undefined;
   } catch (e) {
     console.error("[cortex] converse failed:", (e as Error).message);
     return undefined;
   }
+}
+
+// Connect to Snowflake at startup so the first reply isn't slow.
+export function warmUp(): void {
+  if (configured()) connection().then(ensureTables).catch((e) => console.error("[snowflake] warmup failed:", e.message));
+}
+
+export type Intent = "yes" | "no" | "proof" | "question" | "other";
+
+// Reads what the person means instead of matching exact words.
+export async function classifyIntent(text: string, bet?: string): Promise<Intent> {
+  const t = text.trim().toLowerCase();
+  if (/^(yes|yeah|yep|yup|y|bet|in|im in|i'm in|for sure|definitely)[.!]*$/.test(t)) return "yes";
+  if (/^(no|nope|nah|n|out|never|no way)[.!]*$/.test(t)) return "no";
+  if (!configured()) return /\b(yes|yeah|yep|think so)\b/.test(t) ? "yes" : /\b(no|nope|nah)\b/.test(t) ? "no" : "other";
+  try {
+    const prompt = `A friend is answering a prop bet in a chat. Bet: "${bet ?? "will someone wear a certain clothing item today"}". Their message: "${text}". Classify the message as exactly one word: yes (they think the bet will happen / they're betting yes), no (they think it won't happen / betting no), proof (they claim it happened or are showing evidence), question (they're asking something), other. Output only that one word.`;
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
+    const out = String(rows[0]?.R ?? "").toLowerCase();
+    for (const i of ["yes", "no", "proof", "question"] as const) if (out.includes(i)) return i;
+  } catch (e) {
+    console.error("[cortex] intent failed:", (e as Error).message);
+  }
+  return "other";
 }

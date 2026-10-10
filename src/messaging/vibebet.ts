@@ -5,7 +5,7 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { converse, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyIntent, converse, warmUp, logMessage, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -67,6 +67,7 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
   });
 
   theApp = app;
+  warmUp();
   const loop = consumeMessages(app);
   void loop.catch(() => undefined);
 
@@ -185,7 +186,10 @@ async function handleGroupMessage(
 ): Promise<void> {
   const state = getState();
   const botPhone = message.platform === "telegram" ? "" : imessage(space).phone;
-  if (message.sender?.id) remember(message.sender.id);
+  if (message.sender?.id) {
+    remember(message.sender.id);
+    addToGroup(space.id, message.sender.id);
+  }
   if (text && message.sender?.id) logMessage(message.sender.id, text);
 
   // Dedicated lines deliver an "addMember" event when the bot is added; shared
@@ -195,7 +199,7 @@ async function handleGroupMessage(
   if (content.type === "addMember" && !botWasAdded) return;
 
   if (text && /^\s*\/(chips|balance|bank)\b/i.test(text)) {
-    await replyIn(space, standings());
+    await replyIn(space, standings(isGroupSpace(space, message) ? space.id : undefined));
     return;
   }
 
@@ -208,6 +212,19 @@ async function handleGroupMessage(
   }
   const myGame = gameGen;
 
+  const poster = message.sender?.id;
+  const live = getState();
+  if (live.phase === "open" && poster && live.groupSpace?.id === space.id && !live.players.includes(poster)) {
+    live.players.push(poster);
+    const bet = currentRealBet;
+    betsSent.set(poster, bet);
+    try {
+      await replyIn(await openDm(app, poster), bet);
+    } catch {
+      pendingBets.set(poster, bet);
+    }
+  }
+
   if (!isBetCommand && text && /called.?it|@called_it_ai_bot|\bbot\b/i.test(text)) {
     await smartReply(space, message, text, "i'm here 👀 type /bet to start a bet");
     return;
@@ -217,7 +234,6 @@ async function handleGroupMessage(
     if (!isBetCommand && !botWasAdded) return; // only /bet starts a game
     startReading();
     await replyIn(space, "alr guys creating a bet 🎲 lemme read the gc rq...");
-    await new Promise((resolve) => setTimeout(resolve, 3000));
     if (myGame !== gameGen) return; // a newer /bet replaced this one
 
     let players = await groupPlayers(space, botPhone);
@@ -231,10 +247,8 @@ async function handleGroupMessage(
       if (humans > players.length) {
         await replyIn(
           space,
-          `heads up: i only know ${players.length} of ${humans} of u. everyone else send ANY msg here (or /start in my dm) then type /bet again.`,
+          `i can see ${players.length} of u so far. anyone else who says something here gets pulled in 👀`,
         );
-        resetState();
-        return;
       }
     }
     if (players.length === 0) {
@@ -341,10 +355,33 @@ function remember(id: string): void {
     writeFileSync(KNOWN_FILE, JSON.stringify([...known]));
   } catch {}
 }
+const GROUPS_FILE = ".groups.json";
+const groups = new Map<string, Set<string>>(
+  (() => {
+    try {
+      return Object.entries(JSON.parse(readFileSync(GROUPS_FILE, "utf8")) as Record<string, string[]>).map(
+        ([k, v]) => [k, new Set(v)] as [string, Set<string>],
+      );
+    } catch {
+      return [];
+    }
+  })(),
+);
+function addToGroup(groupId: string, id: string): void {
+  const set = groups.get(groupId) ?? new Set<string>();
+  if (set.has(id)) return;
+  set.add(id);
+  groups.set(groupId, set);
+  try {
+    writeFileSync(GROUPS_FILE, JSON.stringify(Object.fromEntries([...groups].map(([k, v]) => [k, [...v]]))));
+  } catch {}
+}
+let currentRealBet = "";
 const STAKE = 5;
 
-function standings(): string {
-  const rows = leaderboard([...known]).map(([h, c], i) => `${i + 1}. ${aliasFor(h)} — ${c} chips`);
+function standings(groupId?: string): string {
+  const ids = groupId && groups.has(groupId) ? [...groups.get(groupId)!] : [...known];
+  const rows = leaderboard(ids).map(([h, c], i) => `${i + 1}. ${aliasFor(h)} — ${c} chips`);
   return rows.length ? `🏦 chip leaderboard\n${rows.join("\n")}` : "nobody has chips yet, type /bet";
 }
 const pendingBets = new Map<string, string>();
@@ -373,7 +410,7 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
 
 async function groupPlayers(space: Space, botPhone: string): Promise<string[]> {
   try {
-    if (space.id.startsWith("-")) return [...known]; // Telegram can't list members
+    if (space.id.startsWith("-")) return [...(groups.get(space.id) ?? [])]; // Telegram can't list members; use who has spoken here
     const members = await space.getMembers();
     return members.map((m) => m.id).filter((id) => id !== botPhone);
   } catch (err) {
@@ -388,25 +425,30 @@ async function sendPrivateBets(
   target: string,
 ): Promise<void> {
   const state = getState();
-  const realBet = await writeBet(aliasFor(target), state.item);
   // Decoy: the target gets a bet about someone else, same format, so it looks real.
   const others = players.filter((p) => p !== target);
   const decoyPerson = others.length ? others[Math.floor(Math.random() * others.length)] : target;
   const decoyItem = ITEMS.filter((i) => i !== state.item)[Math.floor(Math.random() * (ITEMS.length - 1))];
-  const decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem);
+  const [realBet, decoyBet] = await Promise.all([
+    writeBet(aliasFor(target), state.item),
+    writeBet(aliasFor(decoyPerson), decoyItem),
+  ]);
+  currentRealBet = realBet;
+  console.log("[BETS]", { target: aliasFor(target), real: realBet, decoyFor: aliasFor(decoyPerson), decoy: decoyBet });
 
-  for (const handle of players) {
-    const bet = handle === target ? decoyBet : realBet;
-    betsSent.set(handle, bet);
-    try {
-      const dmSpace = await openDm(app, handle);
-      await replyIn(dmSpace, bet);
-    } catch (err) {
-      // Telegram: bot can't DM until the user taps Start. Hold it for later.
-      pendingBets.set(handle, bet);
-      console.error(`Could not DM ${handle} yet, holding bet.`);
-    }
-  }
+  await Promise.all(
+    players.map(async (handle) => {
+      const bet = handle === target ? decoyBet : realBet;
+      betsSent.set(handle, bet);
+      try {
+        await replyIn(await openDm(app, handle), bet);
+      } catch {
+        // Telegram: bot can't DM until the user taps Start. Hold it for later.
+        pendingBets.set(handle, bet);
+        console.error(`Could not DM ${handle} yet, holding bet.`);
+      }
+    }),
+  );
   if (pendingBets.size > 0 && getState().groupSpace) {
     await replyIn(
       getState().groupSpace!,
@@ -430,7 +472,7 @@ async function handleDM(
     return;
   }
   if (text && /^\s*\/?(chips|balance|bank)\b/i.test(text)) {
-    await replyIn(space, standings());
+    await replyIn(space, standings(isGroupSpace(space, message) ? space.id : undefined));
     return;
   }
   if (state.phase === "idle" && text && !text.startsWith("/") && /\b(start|go|bet|play)\b/i.test(text)) {
@@ -455,17 +497,22 @@ async function handleDM(
 
   const t = text.trim().toLowerCase();
 
-  if (state.phase === "open" && (wantsYes(t) || wantsNo(t))) {
-    const senderId = message.sender?.id;
-    if (!senderId) return;
-    const firstTime = !state.picks.has(senderId);
-    pick(senderId, wantsYes(t) ? "yes" : "no");
-    if (firstTime) await transfer(senderId, POT, STAKE);
-    await replyIn(
-      space,
-      `locked in: ${wantsYes(t) ? "yes" : "no"} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(senderId)})`,
-    );
-    return;
+  if (state.phase === "open") {
+    const intent = await classifyIntent(text, me ? betsSent.get(me) : undefined);
+    if ((intent === "yes" || intent === "no") && me) {
+      const firstTime = !state.picks.has(me);
+      pick(me, intent);
+      if (firstTime) await transfer(me, POT, STAKE);
+      await replyIn(
+        space,
+        `locked in: ${intent} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(me)})`,
+      );
+      return;
+    }
+    if (intent === "proof") {
+      await recordProof(space, message);
+      return;
+    }
   }
 
   if (t.includes("proof") || t.includes("caught") || t.includes("happened")) {
