@@ -162,12 +162,12 @@ async function handleGroupMessage(
   const botWasAdded = content.type === "addMember" && content.members.includes(botPhone);
   if (content.type === "addMember" && !botWasAdded) return;
 
-  if (text && /^\s*\/?(chips|balance|bank)\b/i.test(text)) {
+  if (text && /^\s*\/(chips|balance|bank)\b/i.test(text)) {
     await replyIn(space, standings());
     return;
   }
 
-  const isBetCommand = content.type === "text" && /^\s*\/?bet\b/i.test(content.text);
+  const isBetCommand = content.type === "text" && /^\s*\/bet\b/i.test(content.text);
   // /bet always starts a fresh game, dropping whatever was running.
   if (isBetCommand) {
     resetState();
@@ -408,7 +408,7 @@ async function handleDM(
   if (state.phase === "idle" || text === undefined) {
     await replyIn(
       space,
-      "yo, called it here 👋 once 2+ friends have texted me, say \"start\" and i'll run a bet on one of u.",
+      "yo, called it here 👋 ur all set. go type /bet in the group chat and i'll send everyone a bet in here.",
     );
     return;
   }
