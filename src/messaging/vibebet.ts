@@ -246,16 +246,16 @@ async function handleGroupMessage(
       await resolveNames(space.id, players);
       const count = await tgApi("getChatMemberCount", { chat_id: space.id });
       const humans = typeof count === "number" ? count - 1 : players.length;
-      if (humans < 3) {
-        await replyIn(space, "this needs at least 3 ppl in the gc (the decoy bet needs someone to fool). add another friend and /bet again 🎲");
+      if (humans < 2) {
+        await replyIn(space, "this needs at least 2 ppl in the gc. add a friend and /bet again 🎲");
         resetState();
         return;
       }
     }
-    if (players.length < 3) {
+    if (players.length < 2) {
       await replyIn(
         space,
-        `i've only seen ${players.length} of u talk in here. i need 3+ to run it, get everyone to say something and /bet again 👀`,
+        `i've only seen ${players.length} of u talk in here. i need 2+ to run it, get everyone to say something and /bet again 👀`,
       );
       resetState();
       return;
