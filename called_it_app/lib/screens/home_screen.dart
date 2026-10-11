@@ -51,6 +51,7 @@ class HomeScreen extends StatelessWidget {
               ),
             const SizedBox(height: 12),
             _Standings(players: s.players, meId: s.me.id),
+            if (s.dare != null && s.dare!.lastPlaceName != null) ...[const SizedBox(height: 12), _DareCard(dare: s.dare!)],
             if (s.history.isNotEmpty) ...[const SizedBox(height: 12), _RecentBets(items: s.history)],
             const SizedBox(height: 12),
             if (s.me.isHost) ...[
@@ -120,4 +121,60 @@ class _RecentBets extends StatelessWidget {
             ),
         ]),
       );
+}
+
+
+class _DareCard extends StatelessWidget {
+  const _DareCard({required this.dare});
+  final Dare dare;
+
+  String _when(DateTime t) {
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final m = t.minute.toString().padLeft(2, '0');
+    return '${days[t.weekday - 1]} $h:$m ${t.hour >= 12 ? 'PM' : 'AM'}';
+  }
+
+  String _countdown(DateTime t) {
+    final d = t.difference(DateTime.now());
+    if (d.isNegative) return 'any moment now';
+    if (d.inDays >= 1) return 'in ${d.inDays}d ${d.inHours % 24}h';
+    if (d.inHours >= 1) return 'in ${d.inHours}h ${d.inMinutes % 60}m';
+    return 'in ${d.inMinutes}m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final next = dare.nextAt;
+    return Glass(
+      radius: 24,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Text('WEEKLY DARE', style: _label),
+          const Spacer(),
+          if (next != null) Pill('${_when(next)} · ${_countdown(next)}', color: Aero.orange),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          Avatar(dare.lastPlaceName ?? '', size: 34),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('${dare.lastPlaceName} is in last place', style: const TextStyle(fontWeight: FontWeight.w800)),
+              Text('${dare.lastPlaceBalance} chips · gets the dare', style: const TextStyle(fontSize: 11, color: Aero.inkSoft)),
+            ]),
+          ),
+        ]),
+        if (dare.text != null && dare.text!.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: .55), borderRadius: BorderRadius.circular(14)),
+            child: Text('${dare.name != null ? '${dare.name}: ' : ''}${dare.text}', style: const TextStyle(fontSize: 12.5, height: 1.35)),
+          ),
+        ],
+      ]),
+    );
+  }
 }

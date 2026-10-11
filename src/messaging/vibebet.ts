@@ -7,6 +7,7 @@ import { IMPOSSIBLE_ITEMS, ITEMS, NAMES, STAKE, aliasFor } from "../vibebet/conf
 import { recordResult, startApi } from "../vibebet/api.js";
 import { addMessage, addResult, logEvent, persist, registerSender, type StoredResult } from "../vibebet/events.js";
 import { bindBot, noteGroup, onRealBetOpened, setGroupTitle } from "../vibebet/snapshot.js";
+import { CATCH_UP_MS, lastSlot, loadDare, nextSlot, saveDare, type DareFile } from "../vibebet/dare.js";
 import { computeSettlement, type Outcome } from "../vibebet/settle.js";
 import { POT, balanceOf, leaderboard, mirrorSeq, nessieConfirmedSince, transfer } from "../vibebet/chips.js";
 import { classifyGroupAction, classifyIntent, quickYesNo, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
@@ -777,29 +778,52 @@ function parseResolve(text: string): Outcome | undefined {
   return undefined;
 }
 
-// Every 7 days the last-place player in each Telegram group gets a dare.
-const DARE_FILE = ".dare.json";
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-
+// Every Sunday at 21:00 (server local time) the last-place player in each Telegram group gets a dare.
+// Last place = lowest chip balance in the group; ties go to whoever comes first alphabetically.
 function startWeeklyDare(): void {
   const check = async () => {
-    let last = Date.now();
-    try {
-      last = (JSON.parse(readFileSync(DARE_FILE, "utf8")) as { last: number }).last;
-    } catch {
-      writeFileSync(DARE_FILE, JSON.stringify({ last }));
-      return; // first run: the week starts now
+    const now = new Date();
+    const slot = lastSlot(now);
+    const saved = loadDare();
+    if (!saved) {
+      saveDare({ last: now.getTime() }); // first run: the first week starts now
+      return;
     }
-    if (Date.now() - last < WEEK_MS) return;
-    writeFileSync(DARE_FILE, JSON.stringify({ last: Date.now() }));
+    if (saved.last >= slot.getTime()) return; // this week's slot is already handled
+    // A slot we missed while the bot was down is only posted late within the catch-up window.
+    if (now.getTime() - slot.getTime() > CATCH_UP_MS) {
+      saveDare({ ...saved, last: now.getTime() });
+      return;
+    }
+    const file: DareFile = { ...saved, last: now.getTime() };
+    saveDare(file); // claim the slot before sending so a restart can't post twice
     for (const [groupId, members] of groups) {
       if (!groupId.startsWith("-") || members.size < 2) continue;
       const board = leaderboard([...members]);
-      const loser = board[board.length - 1];
-      if (board[0][1] === loser[1]) continue; // nobody has played yet
-      await tgApi("sendMessage", { chat_id: groupId, text: await writeDare(aliasFor(loser[0])) });
+      const low = board[board.length - 1][1];
+      if (board[0][1] === low) continue; // nobody has played yet
+      const loser = board
+        .filter(([, chips]) => chips === low)
+        .map(([id]) => ({ id, name: aliasFor(id) }))
+        .sort((a, b) => a.name.localeCompare(b.name))[0];
+      const text = await writeDare(loser.name);
+      const sent = await tgApi("sendMessage", { chat_id: groupId, text });
+      const postedAt = new Date().toISOString();
+      file.groups = { ...file.groups, [groupId]: { text, name: loser.name, postedAt } };
+      Object.assign(file, { text, name: loser.name, groupId, postedAt });
+      saveDare(file);
+      logEvent("agent", `Weekly dare for ${loser.name}: ${text}`, undefined, sent ? "ok" : "failed");
     }
   };
   void check().catch(() => undefined);
+  const arm = (): void => {
+    // wake right after the next Sunday 21:00; the hourly tick below is only a safety net
+    const wait = Math.min(nextSlot().getTime() - Date.now() + 1000, 2 ** 31 - 1);
+    setTimeout(() => {
+      void check().catch(() => undefined);
+      arm();
+    }, wait).unref();
+  };
+  arm();
   setInterval(() => void check().catch(() => undefined), 60 * 60 * 1000).unref();
 }

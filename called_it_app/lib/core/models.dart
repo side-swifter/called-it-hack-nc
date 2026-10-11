@@ -58,6 +58,21 @@ class Player {
   final int balance, bets, hits;
 }
 
+class Dare {
+  Dare.fromJson(Map<String, dynamic> j)
+      : enabled = j['enabled'] == true,
+        lastPlaceName = (j['lastPlace'] as Map?)?['name'],
+        lastPlaceBalance = _i((j['lastPlace'] as Map?)?['balance']),
+        nextAt = DateTime.tryParse(j['nextAt'] ?? '')?.toLocal(),
+        text = j['text'],
+        postedAt = DateTime.tryParse(j['postedAt'] ?? '')?.toLocal(),
+        name = j['name'];
+  final bool enabled;
+  final String? lastPlaceName, text, name;
+  final int lastPlaceBalance;
+  final DateTime? nextAt, postedAt;
+}
+
 class HistoryItem {
   HistoryItem.fromJson(Map<String, dynamic> j)
       : at = DateTime.tryParse(j['at'] ?? '') ?? DateTime.now(),
@@ -146,6 +161,7 @@ class Snapshot {
         players = [for (final p in (j['players'] as List? ?? [])) Player.fromJson(p)],
         messages = [for (final m in (j['messages'] as List? ?? [])) ChatMsg.fromJson(m)],
         activity = [for (final a in (j['activity'] as List? ?? [])) ActivityItem.fromJson(a)],
+        dare = j['dare'] == null ? null : Dare.fromJson(j['dare']),
         history = [for (final h in (j['history'] as List? ?? [])) HistoryItem.fromJson(h)],
         result = j['result'] == null ? null : Result.fromJson(j['result']),
         hostStage = j['hostStage'] ?? 'ready',
@@ -157,6 +173,7 @@ class Snapshot {
   final List<Player> players;
   final List<ChatMsg> messages;
   final List<ActivityItem> activity;
+  final Dare? dare;
   final List<HistoryItem> history;
   final Result? result;
   final String hostStage; // ready|generating|picks_open|picks_locked|awaiting_result|settling|settled|error

@@ -4,6 +4,7 @@ import { ITEMS, NAMES, START_CHIPS, STAKE, aliasFor } from "./config.js";
 import { hitRate, pastBetsCached, planBets, recentChat } from "./brain.js";
 import { addMessage as addMsg, getActivity, hasSender, latestResult, logEvent as logEv, removeDemoEntries, sendToGroup } from "./events.js";
 import { getState } from "./state.js";
+import { loadDare, nextSlot } from "./dare.js";
 
 const ENTRY = 2;
 const INITIAL = 20;
@@ -99,6 +100,21 @@ function mergeHistory(live: ReturnType<typeof getActivity>, past: ReturnType<typ
   return [...live, ...extra].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 60);
 }
 
+function dareInfo(players: string[]): any {
+  const saved = loadDare();
+  const mine = (groupHint && saved?.groups?.[groupHint]) || (saved?.text ? { text: saved.text, name: saved.name ?? "", postedAt: saved.postedAt ?? "" } : undefined);
+  const board = seeded ? [] : players.map((id) => ({ name: nameOf(id), balance: balanceOf(id) })).sort((a, b) => a.balance - b.balance || a.name.localeCompare(b.name));
+  const playing = board.length >= 2 && board[0].balance !== board[board.length - 1].balance; // same rule the bot uses to skip the dare
+  return {
+    enabled: process.env.WEEKLY_DARE === "true",
+    lastPlace: playing ? board[0] : null,
+    nextAt: nextSlot().toISOString(),
+    text: mine?.text || null,
+    postedAt: mine?.postedAt ? new Date(mine.postedAt).toISOString() : null,
+    name: mine?.name || null,
+  };
+}
+
 export function snapshot(): any {
   const me = hostId() ?? DEFAULT_ME;
   const players = realPlayers();
@@ -122,6 +138,7 @@ export function snapshot(): any {
     messages: [],
     activity: mergeHistory(getActivity(), history),
     history,
+    dare: dareInfo(players),
     session: started,
   };
 
