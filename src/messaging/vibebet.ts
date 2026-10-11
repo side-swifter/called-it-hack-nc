@@ -3,7 +3,7 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
-import { IMPOSSIBLE_ITEMS, ITEMS, NAMES, STAKE, aliasFor } from "../vibebet/config.js";
+import { ITEMS, NAMES, STAKE, aliasFor } from "../vibebet/config.js";
 import { recordResult, startApi } from "../vibebet/api.js";
 import { addMessage, addResult, logEvent, persist, registerSender, type StoredResult } from "../vibebet/events.js";
 import { bindBot, noteGroup, onRealBetOpened, setGroupTitle } from "../vibebet/snapshot.js";
@@ -264,9 +264,9 @@ async function handleGroupMessage(
     const bet = currentRealBet;
     betsSent.set(poster, bet);
     try {
-      await replyIn(await openDm(app, poster), bet);
+      await replyIn(await openDm(app, poster), greet(poster, bet));
     } catch {
-      pendingBets.set(poster, bet);
+      pendingBets.set(poster, greet(poster, bet));
     }
   }
 
@@ -682,6 +682,11 @@ async function groupPlayers(space: Space, botPhone: string): Promise<string[]> {
   }
 }
 
+/** Each person is greeted by their own name; the bet underneath is identical for everyone except the target's decoy. */
+function greet(handle: string, bet: string): string {
+  return `hey ${aliasFor(handle)} 👀\n${bet}`;
+}
+
 async function sendPrivateBets(
   app: Awaited<ReturnType<typeof Spectrum>>,
   players: string[],
@@ -695,14 +700,16 @@ async function sendPrivateBets(
     const others = players.filter((p) => p !== target);
     const planned = pendingPlan ? others.find((p) => aliasFor(p).toLowerCase() === pendingPlan!.decoyPerson.trim().toLowerCase()) : undefined;
     const decoyPerson = planned ?? (others.length ? others[Math.floor(Math.random() * others.length)] : target);
-    const decoyItem = IMPOSSIBLE_ITEMS[Math.floor(Math.random() * IMPOSSIBLE_ITEMS.length)];
+    // Same format as the real bet, about someone else: a plain everyday item, never anything from the real bet's chat evidence.
+    const spare = ITEMS.filter((i) => i !== state.item && !i.toLowerCase().includes(aliasFor(target).toLowerCase()));
+    const decoyItem = spare[Math.floor(Math.random() * spare.length)];
     decoyHolder = target;
     setBetMeta({ decoyPerson: aliasFor(decoyPerson), decoyItem });
     decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem, undefined, state.groupSpace?.id);
   } else {
     decoyHolder = undefined;
   }
-  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.reason, state.groupSpace?.id);
+  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.evidence, state.groupSpace?.id);
   currentRealBet = realBet;
   console.log("[BETS]", { target: aliasFor(target), real: realBet, decoy: decoyBet ?? "off" });
 
@@ -710,11 +717,12 @@ async function sendPrivateBets(
     players.map(async (handle) => {
       const bet = handle === target && decoyBet ? decoyBet : realBet;
       betsSent.set(handle, bet);
+      const text = greet(handle, bet);
       try {
-        await replyIn(await openDm(app, handle), bet);
+        await replyIn(await openDm(app, handle), text);
       } catch {
         // Telegram: bot can't DM until the user taps Start. Hold it for later.
-        pendingBets.set(handle, bet);
+        pendingBets.set(handle, text);
         console.error(`Could not DM ${handle} yet, holding bet.`);
       }
     }),

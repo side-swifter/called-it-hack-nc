@@ -279,36 +279,21 @@ async function historyFor(target: string, chatId?: string): Promise<[number, num
   return SEED[seedKey(chatId, target)] ?? [0, 0]; // no real history: the bet text just leaves the record out
 }
 
-// The same text is sent to several people, so it must read as a bet ABOUT someone, never as a message TO someone.
-const ADDRESSES_SOMEONE = /\b(you|you'?re|youre|you'?ll|your|yours|ur|u)\b|^\W*(yo|hey|hi|sup|okay|ok|aye|bro|dude)\b[\s,.:!…—-]*\w+[\s,.:!…—-]/i;
-
-export async function writeBet(target: string, item: string, reason?: string, chatId?: string): Promise<string> {
+/**
+ * The bet text is assembled here from real data only: the question, a real quote from this group's chat,
+ * and this group's real record if there is one. No AI-written filler. Each recipient gets a greeting by name
+ * added when it is sent.
+ */
+export async function writeBet(target: string, item: string, evidence?: string, chatId?: string): Promise<string> {
   const [hits, total] = await historyFor(target, chatId);
-  const fallback = `🎯 new bet: will ${target} ${item} today? ${total >= 3 ? `history says ${hits}/${total}. ` : ""}reply "yes" or "no" (${STAKE} chips).`;
-  if (!configured()) return fallback;
-  const prompt = [
-    `You are a playful, snarky friend in a group chat. Write ONE short prop bet (max 30 words, lowercase, one emoji) about whether ${target} will ${item} today.`,
-    `IMPORTANT: this exact message is sent to several different people, so it is NOT addressed to anyone. Talk ABOUT ${target} in the third person (${target}, he/she/they). Never say "you", "your", "ur" or "u", and never start with a greeting or anyone's name (no "yo ${target.toLowerCase()}", no "hey", no "okay ${target.toLowerCase()}").`,
-    total >= 3 ? `Mention their history: it happened ${hits} of the last ${total} times.` : "",
-    `Use ONLY the facts given here, never invent names, surnames, quotes or details.${reason ? ` Also work in this fact from their group chat: ${reason}.` : ""}`,
-    `The message MUST contain this question word for word, so YES always means it happens: "will ${target} ${item} today?" You can add a short snarky line around it.`,
-    `End with: reply "yes" or "no" (${STAKE} chips). Output only the message.`,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
-      const text = clean(String(rows[0]?.R ?? ""));
-      const allowed = new Set([String(STAKE), ...(total >= 3 ? [String(hits), String(total)] : [])]);
-      const madeUpNumber = (text.match(/\d+/g) ?? []).some((n) => !allowed.has(n)); // never let the AI invent a stat
-      if (text && !madeUpNumber && !ADDRESSES_SOMEONE.test(text) && text.toLowerCase().includes(`will ${target} ${item} today`.toLowerCase())) return text;
-    } catch (e) {
-      console.error("[cortex] failed:", (e as Error).message);
-      break;
-    }
+  const lines = [`new bet: will ${target} ${item} today?`];
+  if (evidence) {
+    const i = evidence.indexOf(": ");
+    lines.push(i > 0 ? `${evidence.slice(0, i)} said in the chat: "${evidence.slice(i + 2)}"` : `from the chat: "${evidence}"`);
   }
-  return fallback; // plain third-person template if the AI keeps addressing someone
+  if (total >= 3) lines.push(`${target} has done it ${hits} of the last ${total} times.`);
+  lines.push(`reply "yes" or "no" (${STAKE} chips)`);
+  return lines.join("\n");
 }
 
 const CANNED = [
@@ -551,9 +536,20 @@ export interface BetPlan {
   decoyPerson: string;
   decoyItem: string;
   decoyReason: string;
+  /** A real message from this group's chat that supports the bet, copied verbatim as "Name: text"; empty if none. */
+  evidence: string;
+  decoyEvidence: string;
 }
 
 // Cortex reads the group chat and picks who the bet is about, the outfit or habit, and why.
+/** Returns the chat line ("Name: text") that contains the quoted text, or "" if the model made it up. */
+function realQuote(chat: string[], quoted: unknown): string {
+  const q = String(quoted ?? "").trim().replace(/^[\"'“”]+|[\"'“”]+$/g, "").trim().toLowerCase();
+  if (q.length < 4) return "";
+  const stripped = q.replace(/^[^:]{1,30}:\s*/, ""); // the model sometimes includes the "Name: " prefix
+  return chat.find((l) => l.toLowerCase().includes(q)) ?? (stripped.length >= 4 ? chat.find((l) => l.toLowerCase().includes(stripped)) : undefined) ?? "";
+}
+
 export async function planBets(chat: string[], names: string[], itemOptions: string[]): Promise<BetPlan | undefined> {
   if (!configured() || chat.length === 0) return undefined;
   const prompt = [
@@ -564,7 +560,7 @@ export async function planBets(chat: string[], names: string[], itemOptions: str
     "Pick the person and the outfit or habit that this chat keeps coming back to: strongly prefer something mentioned several times or by several people (a running joke, someone teased about it, something they said they always do). A topic repeated many times beats a one-off.",
     `If nothing in the chat points to a specific person and a specific thing they wear or do, answer {"target": null}. Do not invent one. (Example habits only if the chat itself mentions them: ${itemOptions.slice(0, 6).join(", ")}.)`,
     "Also pick a DIFFERENT person for a decoy bet that looks equally natural, with a different claim and its own reason from the chat if possible.",
-    `Reply with JSON only: {"target": "<name from the list>", "item": "<a short verb phrase, e.g. wear black pants, or be late to class>", "reason": "<short chat fact, e.g. 'he said he loves black pants'>", "decoyPerson": "<different name from the list>", "decoyItem": "<claim>", "decoyReason": "<short chat fact or empty>"}`,
+    `Reply with JSON only: {"target": "<name from the list>", "item": "<a short verb phrase, e.g. wear black pants, or be late to class>", "reason": "<short chat fact, e.g. 'he said he loves black pants'>", "evidence": "<ONE message copied word for word from the chat above that shows why, or empty>", "decoyPerson": "<different name from the list>", "decoyItem": "<claim>", "decoyReason": "<short chat fact or empty>", "decoyEvidence": "<one message copied word for word from the chat above, or empty>"}`,
   ].join("\n");
   try {
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
@@ -578,6 +574,8 @@ export async function planBets(chat: string[], names: string[], itemOptions: str
       decoyPerson: String(j.decoyPerson ?? ""),
       decoyItem: String(j.decoyItem ?? ""),
       decoyReason: String(j.decoyReason ?? ""),
+      evidence: realQuote(chat, j.evidence),
+      decoyEvidence: realQuote(chat, j.decoyEvidence),
     };
   } catch (e) {
     console.error("[cortex] plan failed:", (e as Error).message);

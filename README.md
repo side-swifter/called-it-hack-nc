@@ -48,8 +48,8 @@ flowchart LR
 ```
 
 1. **Observe.** The bot indexes group messages in Snowflake.
-2. **Predict.** Snowflake Cortex reads recent chat and writes a harmless, answerable bet about what someone will wear.
-3. **Play.** Each player gets a private DM with the bet. Players pick YES or NO and stake chips into the pot. Optionally (`DECOY_ENABLED=true`) the person the bet is about gets a decoy bet about someone else, so the real one stays a surprise.
+2. **Predict.** Snowflake Cortex reads this group's indexed chat (only this group's) and picks who the bet is about and what they'll wear or do. Whatever the chat keeps repeating wins. The bet text is assembled from real data: the question, a real quote from the chat, and the group's real record. If the chat gives nothing specific, the bot asks for more instead of inventing a bet.
+3. **Play.** Each player gets a private DM, greeted by their own name, with the bet. Players pick YES or NO and stake chips into the pot. Optionally (`DECOY_ENABLED=true`) the person the bet is about gets a decoy bet about someone else, so the real one stays a surprise.
 4. **Prove.** The target sends a photo, then a message. Cortex decides whether the message sounds like a real proof or a stall. Anyone in the group can also say it happened, didn't happen, or cancel it.
 5. **Settle.** The pot is split among the correct picks, balances update, and the result lands in the group chat. If nobody proves it, the bet times out (`BET_MINUTES`) and settles as "no".
 
