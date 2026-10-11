@@ -1,7 +1,7 @@
 // App-facing game model: one prediction at a time, chips moved through chips.ts, state served as Snapshot.
 import { POT, balanceOf, setBalance, transfer } from "./chips.js";
 import { ITEMS, NAMES, START_CHIPS, STAKE, aliasFor } from "./config.js";
-import { hitRate, pastBetsCached, planBets, recentChat } from "./brain.js";
+import { hitRate, pastBetsCached, planBets, recentChat, snowflakeStatus } from "./brain.js";
 import { addMessage as addMsg, getActivity, hasSender, latestResult, logEvent as logEv, removeDemoEntries, sendToGroup } from "./events.js";
 import { getState } from "./state.js";
 import { loadDare, nextSlot } from "./dare.js";
@@ -124,7 +124,7 @@ export function snapshot(): any {
     name: groupTitle || "The Build Crew",
     membersOnline: players.length,
     photon: status(hasSender() || process.env.TELEGRAM_BOT_TOKEN),
-    snowflake: status(process.env.SNOWFLAKE_ACCOUNT),
+    snowflake: snowflakeStatus(),
     nessie: status(process.env.NESSIE_API_KEY),
   };
   const history = pastBetsCached(20);

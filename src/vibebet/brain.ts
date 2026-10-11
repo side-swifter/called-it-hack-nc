@@ -1,5 +1,6 @@
 // Snowflake: stores chat + outcomes, computes historical rates, Cortex writes the bet.
 // Falls back to seeded fake history + a template when Snowflake isn't configured.
+import { readFileSync, writeFileSync } from "node:fs";
 import snowflake from "snowflake-sdk";
 import { START_CHIPS, STAKE } from "./config.js";
 
@@ -11,46 +12,117 @@ function configured(): boolean {
   return Boolean(process.env.SNOWFLAKE_ACCOUNT && process.env.SNOWFLAKE_USERNAME && process.env.SNOWFLAKE_PASSWORD);
 }
 
+// ---- Connection: one shared session, kept alive, rebuilt automatically when it dies.
 let conn: snowflake.Connection | undefined;
-async function connection(): Promise<snowflake.Connection> {
-  if (conn) return conn;
-  const c = snowflake.createConnection({
-    account: process.env.SNOWFLAKE_ACCOUNT!,
-    username: process.env.SNOWFLAKE_USERNAME!,
-    password: process.env.SNOWFLAKE_PASSWORD!,
-    warehouse: process.env.SNOWFLAKE_WAREHOUSE,
-    database: process.env.SNOWFLAKE_DATABASE,
-    schema: process.env.SNOWFLAKE_SCHEMA,
-    role: process.env.SNOWFLAKE_ROLE || undefined,
-    clientSessionKeepAlive: true, // otherwise Snowflake drops the idle session after a few hours
-  });
-  await new Promise<void>((res, rej) => {
-    const timer = setTimeout(() => rej(new Error("Snowflake login timed out")), 20_000);
-    c.connect((e) => (clearTimeout(timer), e ? rej(e) : res()));
-  });
-  conn = c;
-  return c;
+let connecting: Promise<snowflake.Connection> | undefined;
+let healthy: boolean | undefined; // undefined until the first attempt
+let lastError = "";
+
+function markOk(): void {
+  healthy = true;
+  lastError = "";
+}
+function markFail(e: unknown): void {
+  healthy = false;
+  lastError = (e as Error)?.message ?? String(e);
 }
 
-const DEAD_SESSION = /terminated|not connected|session no longer exists|authentication token has expired|ECONNRESET|socket hang up/i;
+/** What the app shows for Snowflake: reflects real query results, not just that keys exist. */
+export function snowflakeStatus(): "connected" | "connecting" | "unavailable" {
+  if (!configured()) return "unavailable";
+  if (healthy === undefined) return "connecting";
+  return healthy ? "connected" : "unavailable";
+}
+export function snowflakeLastError(): string {
+  return lastError;
+}
 
+function connection(): Promise<snowflake.Connection> {
+  if (conn) return Promise.resolve(conn);
+  if (connecting) return connecting; // single-flight: concurrent callers share one login
+  connecting = new Promise<snowflake.Connection>((resolve, reject) => {
+    const c = snowflake.createConnection({
+      account: process.env.SNOWFLAKE_ACCOUNT!,
+      username: process.env.SNOWFLAKE_USERNAME!,
+      password: process.env.SNOWFLAKE_PASSWORD!,
+      warehouse: process.env.SNOWFLAKE_WAREHOUSE,
+      database: process.env.SNOWFLAKE_DATABASE,
+      schema: process.env.SNOWFLAKE_SCHEMA,
+      role: process.env.SNOWFLAKE_ROLE || undefined,
+      clientSessionKeepAlive: true,
+    });
+    const timer = setTimeout(() => reject(new Error("Snowflake login timed out")), 20_000);
+    c.connect((e) => {
+      clearTimeout(timer);
+      if (e) return reject(e);
+      conn = c;
+      resolve(c);
+    });
+  }).finally(() => {
+    connecting = undefined;
+  });
+  return connecting;
+}
+
+export function resetSnowflakeConnection(): void {
+  dropConnection();
+}
+
+function dropConnection(): void {
+  const old = conn;
+  conn = undefined;
+  tableReady = false;
+  try {
+    old?.destroy(() => undefined);
+  } catch {
+    /* already dead */
+  }
+}
+
+const DEAD_SESSION = /terminated|not connected|session no longer exists|authentication token has expired|ECONNRESET|socket hang up|timed out|ETIMEDOUT|EPIPE/i;
 const QUERY_TIMEOUT_MS = 30_000;
 
+/** Cortex sometimes wraps its answer in quote marks; players should never see them. */
+function clean(text: string): string {
+  return text.trim().replace(/^["'`“‘]+|["'`”’]+$/g, "").trim();
+}
+
+async function execOnce(sqlText: string, binds: snowflake.Binds): Promise<any[]> {
+  const c = await connection();
+  return new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error("Snowflake query timed out")), QUERY_TIMEOUT_MS);
+    c.execute({ sqlText, binds, complete: (e, _s, rows) => (clearTimeout(timer), e ? rej(e) : res(rows ?? [])) });
+  });
+}
+
 async function run(sqlText: string, binds: snowflake.Binds = []): Promise<any[]> {
-  const exec = async (): Promise<any[]> => {
-    const c = await connection();
-    return new Promise((res, rej) => {
-      const timer = setTimeout(() => rej(new Error("Snowflake query timed out (session terminated?)")), QUERY_TIMEOUT_MS);
-      c.execute({ sqlText, binds, complete: (e, _s, rows) => (clearTimeout(timer), e ? rej(e) : res(rows ?? [])) });
-    });
-  };
   try {
-    return await exec();
+    const rows = await execOnce(sqlText, binds);
+    markOk();
+    return rows;
   } catch (e) {
-    if (!(DEAD_SESSION.test((e as Error).message ?? "") || /timed out/i.test((e as Error).message ?? ""))) throw e;
-    conn = undefined; // the cached session died or hung: reconnect once and retry
-    return exec();
+    if (!DEAD_SESSION.test((e as Error).message ?? "")) {
+      markFail(e);
+      throw e;
+    }
+    dropConnection(); // the session died or hung: rebuild it and retry once
+    try {
+      const rows = await execOnce(sqlText, binds);
+      markOk();
+      return rows;
+    } catch (e2) {
+      markFail(e2);
+      throw e2;
+    }
   }
+}
+
+// Heartbeat: a tiny query every 3 minutes keeps the session warm and notices a dead one before a player does.
+function startHeartbeat(): void {
+  const t = setInterval(() => {
+    if (configured()) run("SELECT 1").catch(() => undefined);
+  }, 3 * 60_000);
+  t.unref();
 }
 
 let tableReady = false;
@@ -62,17 +134,61 @@ async function ensureTables(): Promise<void> {
   tableReady = true;
 }
 
-export function logMessage(sender: string, body: string): void {
+// ---- Write queue: inserts are queued, retried until they land, and survive a restart. Nothing is dropped silently.
+interface Pending {
+  sql: string;
+  binds: (string | boolean)[];
+}
+const QUEUE_FILE = ".snowflake-queue.json";
+let queue: Pending[] = (() => {
+  try {
+    return JSON.parse(readFileSync(QUEUE_FILE, "utf8")) as Pending[];
+  } catch {
+    return [];
+  }
+})();
+function persistQueue(): void {
+  try {
+    writeFileSync(QUEUE_FILE, JSON.stringify(queue));
+  } catch {
+    /* best effort */
+  }
+}
+let flushing = false;
+async function flushQueue(): Promise<void> {
+  if (flushing || !configured() || queue.length === 0) return;
+  flushing = true;
+  try {
+    await ensureTables();
+    while (queue.length) {
+      await run(queue[0].sql, queue[0].binds);
+      queue.shift();
+      persistQueue();
+    }
+  } catch (e) {
+    console.error(`[snowflake] ${queue.length} write(s) queued, will retry:`, (e as Error).message);
+  } finally {
+    flushing = false;
+  }
+}
+function enqueue(sql: string, binds: (string | boolean)[]): void {
   if (!configured()) return;
-  ensureTables().then(() => run("INSERT INTO CALLED_IT_MESSAGES (sender, body) VALUES (?, ?)", [sender, body])).catch((e) => console.error("[snowflake] log failed:", e.message));
+  queue.push({ sql, binds });
+  if (queue.length > 5000) queue.shift();
+  persistQueue();
+  void flushQueue();
+}
+setInterval(() => void flushQueue(), 15_000).unref();
+
+export function logMessage(sender: string, body: string): void {
+  enqueue("INSERT INTO CALLED_IT_MESSAGES (sender, body) VALUES (?, ?)", [sender, body]);
 }
 
 export function logOutcome(target: string, bet: string, hit: boolean): void {
   if (!SEED[target]) SEED[target] = [0, 0];
   SEED[target][1]++;
   if (hit) SEED[target][0]++;
-  if (!configured()) return;
-  ensureTables().then(() => run("INSERT INTO CALLED_IT_OUTCOMES (target, bet, hit) VALUES (?, ?, ?)", [target, bet, hit])).catch((e) => console.error("[snowflake] outcome failed:", e.message));
+  enqueue("INSERT INTO CALLED_IT_OUTCOMES (target, bet, hit) VALUES (?, ?, ?)", [target, bet, hit]);
 }
 
 /** Share (0-100) of past bets about `target` that hit, from real outcomes only; undefined with no history. */
@@ -160,7 +276,7 @@ export async function writeBet(target: string, item: string, reason?: string): P
   try {
     const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will ${item} today. ${total >= 3 ? ` Mention their history: it happened ${hits} of the last ${total} times.` : ""} Use ONLY the facts given here, never invent names, surnames, quotes or details.${reason ? ` Also work in this fact from their group chat: ${reason}.` : ""} End with: reply "yes" or "no" (${STAKE} chips). Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
-    const text = String(rows[0]?.R ?? "").trim();
+    const text = clean(String(rows[0]?.R ?? ""));
     return text || fallback;
   } catch (e) {
     console.error("[cortex] failed:", (e as Error).message);
@@ -184,7 +300,7 @@ export async function reactToPhoto(target: string, item: string): Promise<string
   try {
     const prompt = `You are a playful, slightly snarky friend in a group chat. Someone just sent a proof photo for the bet "will ${target} ${item} today". React in ONE short lowercase sentence with one emoji, like you studied the photo. Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
-    return String(rows[0]?.R ?? "").trim() || canned;
+    return clean(String(rows[0]?.R ?? "")) || canned;
   } catch (e) {
     console.error("[cortex] reaction failed:", (e as Error).message);
     return canned;
@@ -217,16 +333,23 @@ export async function converse(input: ConverseInput): Promise<string | undefined
   try {
     const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 9000));
     const rows = await Promise.race([run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]), timeout]);
-    return String(rows[0]?.R ?? "").trim().replace(/^"|"$/g, "") || undefined;
+    return clean(String(rows[0]?.R ?? "")) || undefined;
   } catch (e) {
     console.error("[cortex] converse failed:", (e as Error).message);
     return undefined;
   }
 }
 
-// Connect to Snowflake at startup so the first reply isn't slow.
+// Startup self-test: connect, make sure the tables exist, and check Cortex answers. Logs one clear line.
 export function warmUp(): void {
-  if (configured()) connection().then(ensureTables).catch((e) => console.error("[snowflake] warmup failed:", e.message));
+  if (!configured()) return console.log("[snowflake] not configured; running with local fallbacks");
+  startHeartbeat();
+  (async () => {
+    await ensureTables();
+    const r = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', 'Reply with the single word: ok') AS R");
+    console.log(`[snowflake] ready (Cortex says: ${String(r[0]?.R ?? "").trim().slice(0, 20)}), ${queue.length} write(s) queued`);
+    void flushQueue();
+  })().catch((e) => console.error("[snowflake] startup check failed:", (e as Error).message));
 }
 
 export type Intent = "yes" | "no" | "proof" | "question" | "other";
@@ -249,7 +372,8 @@ export async function classifyIntent(text: string, bet?: string): Promise<Intent
     const prompt = `A friend is answering a prop bet in a chat. Bet: "${bet ?? "will someone do a certain thing today"}". Their message: "${text}". Classify the message as exactly one word: yes (they think the bet will happen / they're betting yes), no (they think it won't happen / betting no), proof (they claim it happened or are showing evidence), question (they're asking something), other. Output only that one word.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     const out = String(rows[0]?.R ?? "").toLowerCase();
-    for (const i of ["yes", "no", "proof", "question"] as const) if (out.includes(i)) return i;
+    const word = /\b(yes|no|proof|question|other)\b/.exec(out)?.[1];
+    if (word === "yes" || word === "no" || word === "proof" || word === "question") return word;
   } catch (e) {
     console.error("[cortex] intent failed:", (e as Error).message);
   }
@@ -279,7 +403,8 @@ export async function classifyGroupAction(
     ].join("\n");
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     const out = String(rows[0]?.R ?? "").trim().toLowerCase();
-    for (const a of ["cancel", "yes", "no"] as const) if (out.startsWith(a)) return a;
+    const word = /^\W*(cancel|yes|none|no)\b/.exec(out)?.[1]; // whole word: "none" must never read as "no"
+    if (word === "cancel" || word === "yes" || word === "no") return word;
   } catch (e) {
     console.error("[cortex] group action failed:", (e as Error).message);
   }
@@ -326,10 +451,7 @@ export function logChat(chatId: string, sender: string, name: string, body: stri
   mem.push(`${name}: ${body}`);
   if (mem.length > MEMORY_CAP) mem.shift();
   memoryChat.set(chatId, mem);
-  if (!configured()) return;
-  ensureTables()
-    .then(() => run("INSERT INTO CALLED_IT_CHAT (chat_id, sender, name, body) VALUES (?, ?, ?, ?)", [chatId, sender, name, body]))
-    .catch((e) => console.error("[snowflake] chat log failed:", e.message));
+  enqueue("INSERT INTO CALLED_IT_CHAT (chat_id, sender, name, body) VALUES (?, ?, ?, ?)", [chatId, sender, name, body]);
 }
 
 // Newest `limit` messages in a chat, oldest first. Pass `name` to read only one person's messages.
@@ -342,7 +464,12 @@ export async function recentChat(chatId: string, limit = 500, name?: string): Pr
         `SELECT name, body FROM (SELECT ts, name, body FROM CALLED_IT_CHAT WHERE chat_id = ?${name ? " AND name = ?" : ""} ORDER BY ts DESC LIMIT ${n}) ORDER BY ts ASC`,
         name ? [chatId, name] : [chatId],
       );
-      if (rows.length) return rows.map((r) => `${r.NAME}: ${r.BODY}`);
+      // lines still waiting in the write queue belong at the end
+      const waiting = queue
+        .filter((q) => q.sql.includes("CALLED_IT_CHAT") && q.binds[0] === chatId && (!name || q.binds[2] === name))
+        .map((q) => `${q.binds[2]}: ${q.binds[3]}`);
+      const all = [...rows.map((r) => `${r.NAME}: ${r.BODY}`), ...waiting];
+      if (all.length) return all.slice(-n);
     } catch (e) {
       console.error("[snowflake] chat read failed:", (e as Error).message);
     }
@@ -424,7 +551,7 @@ export async function writeDare(name: string): Promise<string> {
   try {
     const prompt = `You are a playful, snarky friend in a group chat. ${name} finished last on the chip leaderboard this week. Write ONE short lowercase text (max 35 words, one emoji) announcing a harmless, funny dare for them to do. Use only this name, invent no other facts. Output only the message.`;
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
-    return String(rows[0]?.R ?? "").trim() || canned;
+    return clean(String(rows[0]?.R ?? "")) || canned;
   } catch (e) {
     console.error("[cortex] dare failed:", (e as Error).message);
     return canned;
