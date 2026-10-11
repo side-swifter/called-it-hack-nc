@@ -22,17 +22,27 @@ async function connection(): Promise<snowflake.Connection> {
     database: process.env.SNOWFLAKE_DATABASE,
     schema: process.env.SNOWFLAKE_SCHEMA,
     role: process.env.SNOWFLAKE_ROLE || undefined,
+    clientSessionKeepAlive: true, // otherwise Snowflake drops the idle session after a few hours
   });
   await new Promise<void>((res, rej) => c.connect((e) => (e ? rej(e) : res())));
   conn = c;
   return c;
 }
 
+const DEAD_SESSION = /terminated|not connected|session no longer exists|authentication token has expired|ECONNRESET|socket hang up/i;
+
 async function run(sqlText: string, binds: snowflake.Binds = []): Promise<any[]> {
-  const c = await connection();
-  return new Promise((res, rej) =>
-    c.execute({ sqlText, binds, complete: (e, _s, rows) => (e ? rej(e) : res(rows ?? [])) }),
-  );
+  const exec = async (): Promise<any[]> => {
+    const c = await connection();
+    return new Promise((res, rej) => c.execute({ sqlText, binds, complete: (e, _s, rows) => (e ? rej(e) : res(rows ?? [])) }));
+  };
+  try {
+    return await exec();
+  } catch (e) {
+    if (!DEAD_SESSION.test((e as Error).message ?? "")) throw e;
+    conn = undefined; // the cached session died: reconnect once and retry
+    return exec();
+  }
 }
 
 let tableReady = false;
@@ -132,7 +142,7 @@ async function historyFor(target: string): Promise<[number, number]> {
       console.error("[snowflake] history failed:", (e as Error).message);
     }
   }
-  return SEED[target] ?? [3, 4]; // placeholder odds for the bet text only; never counted as real history
+  return SEED[target] ?? [0, 0]; // no real history: the bet text just leaves the record out
 }
 
 export async function writeBet(target: string, item: string, reason?: string): Promise<string> {
