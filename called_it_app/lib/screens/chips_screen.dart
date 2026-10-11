@@ -174,12 +174,12 @@ class ChipsScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
         radius: 22,
         child: Row(children: [
-          const MockCoinLogo(size: 38),
+          SizedBox(width: 38, height: 38, child: Image.asset('assets/brand/logo.png', fit: BoxFit.contain)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                const Text('VibeBet', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: _navy)),
+                const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: _navy)),
                 const SizedBox(width: 8),
                 Flexible(child: MockPill('Chips & Pool', bg: const Color(0xFFD8EEFB), border: const Color(0xFFB5DBF2), fg: _blueText, size: 10.5)),
               ]),

@@ -28,8 +28,6 @@ class HomeScreen extends StatelessWidget {
                     GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF1B4766)))),
                     const SizedBox(height: 4),
                     Row(children: [
-                      Flexible(child: Text(s.room.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
-                      const SizedBox(width: 6),
                       Pill('AI ${s.room.photon}', color: _c(s.room.photon), dot: true),
                     ]),
                   ]),

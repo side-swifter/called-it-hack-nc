@@ -67,8 +67,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
                     child: GestureDetector(
                       onTap: () => setState(() => filter = f.$1),
                       child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 3),
-                        padding: const EdgeInsets.symmetric(vertical: 9),
+                        margin: const EdgeInsets.symmetric(horizontal: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 4),
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
@@ -77,7 +77,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                           border: Border.all(color: Colors.white.withValues(alpha: .9), width: 1.2),
                           boxShadow: filter == f.$1 ? const [BoxShadow(color: Color(0x551E90E0), blurRadius: 8, offset: Offset(0, 3))] : null,
                         ),
-                        child: Text(f.$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: filter == f.$1 ? Colors.white : const Color(0xFF3B8FD4))),
+                        child: FittedBox(fit: BoxFit.scaleDown, child: Text(f.$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: filter == f.$1 ? Colors.white : const Color(0xFF3B8FD4)))),
                       ),
                     ),
                   ),

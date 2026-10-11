@@ -60,6 +60,7 @@ flutter:
 
   assets:
     - assets/bg/
+    - assets/brand/
 
   fonts:
     - family: PlusJakarta

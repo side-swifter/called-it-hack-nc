@@ -7,7 +7,7 @@ import { addMessage as addMsg, getActivity, getMessages, hasSender, logEvent as 
 
 const ENTRY = 2;
 const INITIAL = 20;
-const DEMO_PADS: [string, string][] = [["demo-alex", "Alex"], ["demo-maya", "Maya"], ["demo-jordan", "Jordan"]];
+const DEMO_PADS: [string, string][] = [["demo-alex", "Akshay"], ["demo-maya", "Maya"], ["demo-jordan", "Jordan"]];
 
 type Stage = "open" | "locked" | "settling" | "settled";
 interface Pick {
@@ -29,7 +29,7 @@ let result: any;
 let started = false;
 let generating = false;
 let counter = 0;
-let seeded = false; // demo seed active: "me" is Alex and the roster is the three demo players
+let seeded = false; // demo seed active: "me" is Akshay and the roster is the three demo players
 let knownIds: () => string[] = () => [];
 let groupHint = ""; // most recent group chat id
 
@@ -285,7 +285,7 @@ export async function seed(): Promise<Out> {
   const ago = (min: number): Date => new Date(Date.now() - min * 60_000);
   ev("prediction", "Demo prediction loaded: Will Sam say 'ship it' before the demo ends?", id, "ok", { at: ago(5), demo: true });
   ev("agent", "Photon announcement shown in the room", id, "ok", { at: ago(4), demo: true });
-  msg("Alex", "He's definitely going to say it again.", false, { at: ago(3), demo: true });
+  msg("Akshay", "He's definitely going to say it again.", false, { at: ago(3), demo: true });
   msg("Maya", "I'm taking YES. Sam loves that line right before demos.", false, { at: ago(2), demo: true });
   msg("Jordan", "No way. He knows everyone is waiting for it.", false, { at: ago(1), demo: true });
   msg("Photon AI Agent", "Prediction is live! 2 demo chips per pick. Group pool: 6 chips.", true, { at: new Date(), demo: true });

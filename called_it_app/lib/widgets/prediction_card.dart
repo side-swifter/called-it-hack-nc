@@ -10,18 +10,7 @@ class VbLogo extends StatelessWidget {
   const VbLogo({super.key, this.size = 36});
   final double size;
   @override
-  Widget build(BuildContext context) => Container(
-        width: size,
-        height: size,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF6CC4F7), Color(0xFF1479D1)]),
-          border: Border.all(color: Colors.white, width: 2),
-          boxShadow: const [BoxShadow(color: Color(0x401E9BE8), blurRadius: 8, offset: Offset(0, 2))],
-        ),
-        child: Text('VB', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: size * .36)),
-      );
+  Widget build(BuildContext context) => SizedBox(width: size, height: size, child: Image.asset('assets/brand/logo.png', fit: BoxFit.contain, filterQuality: FilterQuality.high));
 }
 
 /// Live prediction card. Shows YES/NO controls when open and the player has no pick;

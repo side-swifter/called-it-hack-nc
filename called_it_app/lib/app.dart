@@ -88,7 +88,7 @@ class _NavBar extends StatelessWidget {
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () => onTap(i),
-                child: Center(child: i == index ? _active(items[i]) : _inactive(items[i])),
+                child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: i == index ? _active(items[i]) : _inactive(items[i]))),
               ),
             ),
         ]),
@@ -97,7 +97,7 @@ class _NavBar extends StatelessWidget {
   }
 
   Widget _active((IconData, IconData, String) it) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD9F1FF), Color(0xFFA9DBFA)]),
