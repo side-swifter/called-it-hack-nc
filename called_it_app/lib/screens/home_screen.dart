@@ -21,13 +21,21 @@ class HomeScreen extends StatelessWidget {
           return ListView(padding: const EdgeInsets.all(14), children: [
             Glass(
               child: Row(children: [
-                GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Aero.skyDeep))),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Aero.skyDeep))),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      Flexible(child: Text(s.room.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
+                      const SizedBox(width: 6),
+                      Pill('AI ${s.room.photon}', color: _c(s.room.photon), dot: true),
+                    ]),
+                  ]),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: Text(s.room.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700))),
-                Pill('AI ${s.room.photon}', color: _c(s.room.photon), dot: true),
-                const SizedBox(width: 6),
                 ChipsBadge(s.me.balance, onTap: () => goTab(context, 3)),
-                IconButton(onPressed: () => Navigator.pushNamed(context, '/settings'), icon: const Icon(Icons.account_circle_outlined, color: Aero.skyDeep)),
+                const SizedBox(width: 6),
+                GestureDetector(onTap: () => Navigator.pushNamed(context, '/settings'), child: const Icon(Icons.account_circle_outlined, color: Aero.skyDeep, size: 28)),
               ]),
             ),
             if (appState.error != null) const Padding(padding: EdgeInsets.only(top: 8), child: Pill('Showing last confirmed data', color: Aero.orange)),
