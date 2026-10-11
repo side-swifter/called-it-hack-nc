@@ -29,11 +29,31 @@ export function aliasFor(handle: string): string {
   return NAMES.get(handle) ?? ROSTER.find((p) => p.handle === handle)?.alias ?? `…${handle.replace(/\D/g, "").slice(-4)}`;
 }
 
+// Bets are "will <person> <claim> today?", so a claim is any outfit or habit.
+export const STAKE = 30;
+export const START_CHIPS = 100;
+
 export const ITEMS = [
-  "a red jacket",
-  "a black t-shirt",
-  "a white hoodie",
-  "a blue shirt",
-  "a green jacket",
-  "a gray sweatshirt",
+  "wear a red jacket",
+  "wear a black t-shirt",
+  "wear a white hoodie",
+  "wear a blue shirt",
+  "wear a green jacket",
+  "wear a gray sweatshirt",
+  "be late to class",
+  "make it to an 8 AM class",
+  "skip the gym",
+  "order food delivery",
+  "stay up past 2 AM",
+  "wake up before 8 AM",
+];
+
+// Decoy bets use claims nobody realistically pulls off, so a decoy holder's "proof" can never be real.
+export const IMPOSSIBLE_ITEMS = [
+  "wear a full tuxedo",
+  "wear a banana costume",
+  "wear a puffy winter parka",
+  "wear a bathrobe and slippers",
+  "wear knight's armor",
+  "show up to class in a full wetsuit",
 ];

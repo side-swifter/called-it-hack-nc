@@ -15,6 +15,7 @@ export interface ResultRecord {
   winners: string[];
   losers: string[];
   pot: number;
+  outcome: "yes" | "no";
 }
 const results: ResultRecord[] = [];
 

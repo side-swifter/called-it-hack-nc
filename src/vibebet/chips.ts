@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { START_CHIPS } from "./config.js";
 // Play-chip ledger. Uses Capital One Nessie (sandbox) when NESSIE_API_KEY is set;
 // local balances are always updated first so the demo never waits on the API.
 const BASE = "https://api.nessieisreal.com";
@@ -18,7 +19,7 @@ function save(): void {
   } catch {}
 }
 const accountIds = new Map<string, Promise<string>>(); // handle -> nessie account id
-const START_CHIPS = 20;
+
 
 function key(): string | undefined {
   return process.env.NESSIE_API_KEY || undefined;

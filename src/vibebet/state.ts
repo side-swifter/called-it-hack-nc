@@ -13,6 +13,8 @@ export interface GameState {
   photoFrom: Set<string>; // handles who sent a photo and are waiting to be judged
   groupSpace: Space | null;
   players: string[];
+  timer: ReturnType<typeof setTimeout> | null; // auto-settles "no" at the deadline
+  deadline: number | null; // epoch ms
 }
 
 let state: GameState = {
@@ -24,6 +26,8 @@ let state: GameState = {
   photoFrom: new Set(),
   groupSpace: null,
   players: [],
+  timer: null,
+  deadline: null,
 };
 
 export function getState(): GameState {
@@ -31,6 +35,7 @@ export function getState(): GameState {
 }
 
 export function resetState(): void {
+  clearDeadline();
   state = {
     phase: "idle",
     targetAlias: null,
@@ -40,6 +45,8 @@ export function resetState(): void {
     photoFrom: new Set(),
     groupSpace: null,
     players: [],
+    timer: null,
+    deadline: null,
   };
 }
 
@@ -60,7 +67,20 @@ export function pick(handle: string, side: "yes" | "no"): void {
   state.picks.set(handle, side);
 }
 
+export function clearDeadline(): void {
+  if (state.timer) clearTimeout(state.timer);
+  state.timer = null;
+  state.deadline = null;
+}
+
+export function setDeadline(timer: ReturnType<typeof setTimeout>, deadline: number): void {
+  clearDeadline();
+  state.timer = timer;
+  state.deadline = deadline;
+}
+
 export function settle(): void {
+  clearDeadline();
   state.phase = "settled";
 }
 

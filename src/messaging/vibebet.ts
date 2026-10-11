@@ -3,12 +3,13 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
-import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
+import { IMPOSSIBLE_ITEMS, ITEMS, NAMES, STAKE, aliasFor } from "../vibebet/config.js";
 import { recordResult, startApi } from "../vibebet/api.js";
 import { addMessage, logEvent, registerSender } from "../vibebet/events.js";
 import { noteGroup } from "../vibebet/snapshot.js";
+import { computeSettlement, type Outcome } from "../vibebet/settle.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { classifyIntent, converse, judgeProof, logChat, planBets, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyIntent, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -17,6 +18,7 @@ import {
   settle,
   startReading,
   addProof,
+  setDeadline,
   PROOFS_NEEDED,
 } from "../vibebet/state.js";
 
@@ -48,6 +50,15 @@ function note(spaceId: string, line: string): void {
 }
 
 const betsSent = new Map<string, string>();
+// The target holds a decoy bet, so nothing they send can settle the real one.
+let decoyHolder: string | undefined;
+let targetId: string | undefined;
+const DECOY_REJECTS = [
+  "lol nice try, that's not it 🙄",
+  "that's not proof of anything, stop larping",
+  "hmm i'm gonna need way more than that 👀",
+  "sure bud. not buying it",
+];
 let lastGroup: Space | undefined;
 
 async function replyIn(space: Space, text: string): Promise<void> {
@@ -77,6 +88,7 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
     await replyIn(lastGroup, text);
   });
   warmUp();
+  startWeeklyDare();
   startApi(() => [...known]);
   const loop = consumeMessages(app);
   void loop.catch(() => undefined);
@@ -285,6 +297,7 @@ async function handleGroupMessage(
     const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];
     pendingPlan = plan && byName(plan.target) ? plan : undefined;
     openBet(aliasFor(target), item, space, players);
+    armDeadline();
     logEvent("prediction", `Bet opened for ${players.length} players`);
 
     await replyIn(
@@ -304,9 +317,8 @@ async function handleGroupMessage(
   if (!isBetCommand && (await judgeIfPhotoPending(space, message, text))) return;
   const t = text.trim().toLowerCase();
 
-  if (state.phase === "open" && wantsResolve(t)) {
-    await announceResult();
-  }
+  const resolveAs = state.phase === "open" ? parseResolve(t) : undefined;
+  if (resolveAs) await announceResult(resolveAs);
 }
 
 // A photo alone proves nothing: stay quiet and wait for the sender's next text.
@@ -320,6 +332,11 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
   const sender = message.sender?.id;
   const state = getState();
   if (!sender || state.phase !== "open" || !state.photoFrom.has(sender)) return false;
+  if (sender === decoyHolder) {
+    state.photoFrom.delete(sender);
+    await replyIn(space, DECOY_REJECTS[Math.floor(Math.random() * DECOY_REJECTS.length)]);
+    return true;
+  }
   const verdict = await judgeProof({
     target: state.targetAlias ?? "someone",
     item: state.item,
@@ -334,34 +351,57 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
   return true;
 }
 
-async function announceResult(): Promise<void> {
+const REBEL_CUT = 0.1; // share of the pot the target earns for going against the majority
+
+// Auto-settles "no" if nobody proves it before the deadline. The captured state
+// object guards against a timer from an earlier game settling a later one.
+function armDeadline(): void {
+  const game = getState();
+  const minutes = Number(process.env.BET_MINUTES);
+  const ms = (minutes > 0 ? minutes : 10) * 60_000;
+  const timer = setTimeout(() => {
+    if (getState() !== game) return;
+    void announceResult("no").catch((err) => console.error("Deadline settle failed:", err));
+  }, ms);
+  timer.unref();
+  setDeadline(timer, Date.now() + ms);
+}
+
+async function announceResult(outcome: Outcome = "yes"): Promise<void> {
   const state = getState();
   const group = state.groupSpace;
   if (state.phase !== "open") return;
   settle();
   const target = state.targetAlias ?? "someone";
-  const winnerIds = [...state.picks].filter(([, side]) => side === "yes").map(([h]) => h);
-  const loserIds = [...state.picks].filter(([, side]) => side === "no").map(([h]) => h);
-  const winners = winnerIds.map(aliasFor);
-  const losers = loserIds.map(aliasFor);
-  // Everyone's stakes are in the pot. Winners split it; if nobody won, everyone is refunded.
-  const potSize = state.picks.size * STAKE;
-  const bonus = winnerIds.length ? Math.floor(potSize / winnerIds.length) : 0;
-  if (winnerIds.length) {
-    for (const h of winnerIds) await transfer(POT, h, bonus);
-  } else {
-    for (const h of loserIds) await transfer(POT, h, STAKE);
+  // The decoy holder bet on a different question: refund them and keep them out of the real pot.
+  if (decoyHolder && state.picks.has(decoyHolder)) {
+    await transfer(POT, decoyHolder, STAKE);
+    state.picks.delete(decoyHolder);
   }
-  logOutcome(target, state.item, true);
-  recordResult({ target, item: state.item, winners, losers, pot: potSize });
+  decoyHolder = undefined;
+  // Everyone's stakes are in the pot. Winners split it; if nobody won, everyone is refunded.
+  const s = computeSettlement(state.picks, outcome, STAKE, targetId ? REBEL_CUT : 0);
+  const winners = s.winnerIds.map(aliasFor);
+  const losers = s.loserIds.map(aliasFor);
+  if (s.targetBonus) await transfer(POT, targetId!, s.targetBonus);
+  if (s.refundAll) {
+    for (const h of s.loserIds) await transfer(POT, h, STAKE);
+  } else {
+    for (const h of s.winnerIds) await transfer(POT, h, s.payout);
+  }
+  logOutcome(target, state.item, outcome === "yes");
+  recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome });
   const players = [...state.players];
+  const headline =
+    outcome === "yes" ? `🚨 ${target} CALLED IT. ${state.item} confirmed 📸` : `🧊 ${target} did not ${state.item}. no show.`;
   await say(
     group,
-    `🚨 ${target} CALLED IT. ${state.item} confirmed 📸\n` +
-      (winners.length ? `w for ${winners.join(", ")} 🏆 +${bonus} chips each\n` : "nobody bet yes lol, everyone gets their chips back\n") +
-      (losers.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
-      `pot was ${potSize} chips.\n🏦 ` +
-      leaderboard([...state.picks.keys()]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · "),
+    `${headline}\n` +
+      (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
+      (losers.length && winners.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
+      (s.targetBonus ? `${target} went against the crowd and walked off with ${s.targetBonus} chips 😈\n` : "") +
+      `pot was ${s.pot} chips.\n🏦 ` +
+      leaderboard([...state.picks.keys(), ...(s.targetBonus && targetId ? [targetId] : [])]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · "),
     players,
   );
   pendingBets.clear();
@@ -420,7 +460,6 @@ function addToGroup(groupId: string, id: string): void {
 }
 let currentRealBet = "";
 let pendingPlan: import("../vibebet/brain.js").BetPlan | undefined;
-const STAKE = 5;
 
 function standings(groupId?: string): string {
   const ids = groupId && groups.has(groupId) ? [...groups.get(groupId)!] : [...known];
@@ -447,6 +486,7 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
   await new Promise((r) => setTimeout(r, 3000));
   const target = players[Math.floor(Math.random() * players.length)];
   openBet(aliasFor(target), ITEMS[Math.floor(Math.random() * ITEMS.length)], null, players);
+  armDeadline();
   await say(null, "alr the bets are on, check the next msg 👇", players);
   await sendPrivateBets(app, players, target);
 }
@@ -472,11 +512,12 @@ async function sendPrivateBets(
   const others = players.filter((p) => p !== target);
   const planned = pendingPlan ? others.find((p) => aliasFor(p).toLowerCase() === pendingPlan!.decoyPerson.trim().toLowerCase()) : undefined;
   const decoyPerson = planned ?? (others.length ? others[Math.floor(Math.random() * others.length)] : target);
-  const decoyItem =
-    (planned && pendingPlan?.decoyItem) || ITEMS.filter((i) => i !== state.item)[Math.floor(Math.random() * (ITEMS.length - 1))];
+  const decoyItem = IMPOSSIBLE_ITEMS[Math.floor(Math.random() * IMPOSSIBLE_ITEMS.length)];
+  decoyHolder = target;
+  targetId = target;
   const [realBet, decoyBet] = await Promise.all([
     writeBet(aliasFor(target), state.item, pendingPlan?.reason),
-    writeBet(aliasFor(decoyPerson), decoyItem, planned ? pendingPlan?.decoyReason : undefined),
+    writeBet(aliasFor(decoyPerson), decoyItem),
   ]);
   currentRealBet = realBet;
   console.log("[BETS]", { target: aliasFor(target), real: realBet, decoyFor: aliasFor(decoyPerson), decoy: decoyBet });
@@ -547,6 +588,10 @@ async function handleDM(
     const intent = await classifyIntent(text, me ? betsSent.get(me) : undefined);
     if ((intent === "yes" || intent === "no") && me) {
       const firstTime = !state.picks.has(me);
+      if (firstTime && balanceOf(me) < STAKE) {
+        await replyIn(space, `not enough chips for this one (${balanceOf(me)} left, need ${STAKE}) 💸`);
+        return;
+      }
       pick(me, intent);
       if (firstTime) await transfer(me, POT, STAKE);
       if (firstTime) logEvent("chips", `${aliasFor(me)} locked in ${intent.toUpperCase()}`);
@@ -566,7 +611,7 @@ async function handleDM(
     space,
     message,
     text,
-    "reply yes or no on the bet (5 chips), or send a photo as proof when it happens.",
+    `reply yes or no on the bet (${STAKE} chips), or send a photo as proof when it happens.`,
     message.sender?.id ? betsSent.get(message.sender.id) : undefined,
   );
 }
@@ -579,13 +624,38 @@ function wantsNo(text: string): boolean {
   return text.length < 60 && /^(no|nope|nah|never|out)\b/.test(text);
 }
 
-function wantsResolve(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  return (
-    t === "!resolve" ||
-    t.includes("resolve") ||
-    t.includes("settle") ||
-    t.includes("it happened") ||
-    t.includes("payday")
-  );
+// "/resolve", "/resolve yes", "/resolve no", "!resolve ..." (also "/resolve@botname"). Bare = yes.
+// "/end" is kept as a shortcut for "/resolve no". Must be the whole message, not a mention of the word.
+function parseResolve(text: string): Outcome | undefined {
+  const m = /^[/!]resolve(?:@\w+)?(?:\s+(yes|no))?$/.exec(text.trim().toLowerCase());
+  if (m) return (m[1] as Outcome | undefined) ?? "yes";
+  if (/^\/end(?:@\w+)?$/.test(text.trim().toLowerCase())) return "no";
+  return undefined;
+}
+
+// Every 7 days the last-place player in each Telegram group gets a dare.
+const DARE_FILE = ".dare.json";
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+function startWeeklyDare(): void {
+  const check = async () => {
+    let last = Date.now();
+    try {
+      last = (JSON.parse(readFileSync(DARE_FILE, "utf8")) as { last: number }).last;
+    } catch {
+      writeFileSync(DARE_FILE, JSON.stringify({ last }));
+      return; // first run: the week starts now
+    }
+    if (Date.now() - last < WEEK_MS) return;
+    writeFileSync(DARE_FILE, JSON.stringify({ last: Date.now() }));
+    for (const [groupId, members] of groups) {
+      if (!groupId.startsWith("-") || members.size < 2) continue;
+      const board = leaderboard([...members]);
+      const loser = board[board.length - 1];
+      if (board[0][1] === loser[1]) continue; // nobody has played yet
+      await tgApi("sendMessage", { chat_id: groupId, text: await writeDare(aliasFor(loser[0])) });
+    }
+  };
+  void check().catch(() => undefined);
+  setInterval(() => void check().catch(() => undefined), 60 * 60 * 1000).unref();
 }
