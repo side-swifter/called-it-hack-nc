@@ -17,7 +17,25 @@ class HomeScreen extends StatelessWidget {
         listenable: appState,
         builder: (context, _) {
           final s = appState.snap;
-          if (s == null) return Center(child: appState.error != null ? Text('Can’t reach the backend', style: const TextStyle(fontWeight: FontWeight.w700)) : const CircularProgressIndicator());
+          if (s == null) {
+            if (appState.error == null) return const Center(child: CircularProgressIndicator());
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Glass(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Text('Can’t reach the backend', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    const SizedBox(height: 8),
+                    Text('Trying $apiBase', textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Text('${appState.error}', textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, color: Aero.inkSoft)),
+                    const SizedBox(height: 12),
+                    GlossyButton(label: 'Retry', onPressed: appState.refresh),
+                  ]),
+                ),
+              ),
+            );
+          }
           final p = s.prediction;
           return ListView(padding: const EdgeInsets.all(14), children: [
             Glass(
