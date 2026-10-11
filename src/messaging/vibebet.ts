@@ -406,6 +406,12 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
   );
   if (verdict.accept) {
     state.photoFrom.delete(sender);
+    // Claiming it with proof means you called it: lock in the side you're arguing if you never picked (the target can't bet on themselves).
+    if (!isTarget && !state.picks.has(sender)) {
+      const side: Outcome = verdict.claim === "didnt" ? "no" : "yes";
+      const r = await placePick(sender, side, false);
+      if (r.ok) await replyIn(space, `${aliasFor(sender)} u never picked, so i locked u in ${side.toUpperCase()} 🔒 ${STAKE} chips since ur calling it`);
+    }
     if (verdict.claim === "didnt") {
       // Evidence that it did NOT happen settles the bet NO. If the target is the one who shows it, they defend themselves.
       await announceResult("no", { refutedByTarget: isTarget });
@@ -467,12 +473,13 @@ async function announceResult(outcome: Outcome = "yes", opts: { refutedByTarget?
   logOutcome(target, state.item, outcome === "yes", group?.id);
   recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome, betId });
   const players = [...state.players];
+  const callers = winners.length ? `${winners.join(" & ")} CALLED IT. ` : "";
   const headline =
     outcome === "yes"
-      ? `🚨 ${target} CALLED IT. ${state.item} confirmed 📸`
+      ? `🚨 ${callers}${target} did it: ${state.item} confirmed 📸`
       : s.defended
         ? `🛡️ ${target} shut it down. did NOT ${state.item}, proof accepted.`
-        : `🧊 ${target} did not ${state.item}. no show.`;
+        : `🧊 ${callers}${target} did not ${state.item}. no show.`;
   const announcement =
     `${headline}\n` +
     (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : s.defended ? "" : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
@@ -848,3 +855,16 @@ function startWeeklyDare(): void {
   arm();
   setInterval(() => void check().catch(() => undefined), 60 * 60 * 1000).unref();
 }
+
+// Hooks for tests only: lets a script drive a round without Telegram.
+export const __testing = {
+  judgeIfPhotoPending,
+  announceResult,
+  placePick,
+  setTarget(id: string | undefined): void {
+    targetId = id;
+  },
+  setDecoyHolder(id: string | undefined): void {
+    decoyHolder = id;
+  },
+};
