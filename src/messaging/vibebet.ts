@@ -5,6 +5,8 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { ITEMS, NAMES, aliasFor } from "../vibebet/config.js";
 import { recordResult, startApi } from "../vibebet/api.js";
+import { addMessage, logEvent, registerSender } from "../vibebet/events.js";
+import { noteGroup } from "../vibebet/snapshot.js";
 import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
 import { classifyIntent, converse, judgeProof, logChat, planBets, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
@@ -46,9 +48,11 @@ function note(spaceId: string, line: string): void {
 }
 
 const betsSent = new Map<string, string>();
+let lastGroup: Space | undefined;
 
 async function replyIn(space: Space, text: string): Promise<void> {
   note(space.id, `bot: ${text}`);
+  if (space.id === lastGroup?.id) addMessage("Photon AI", text, true);
   const sent = await space.send(text);
   lastReplyAt.set(space.id, Date.now());
   if (sent?.id) {
@@ -68,6 +72,10 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
   });
 
   theApp = app;
+  registerSender(async (text) => {
+    if (!lastGroup) throw new Error("no group chat seen yet");
+    await replyIn(lastGroup, text);
+  });
   warmUp();
   startApi(() => [...known]);
   const loop = consumeMessages(app);
@@ -195,6 +203,11 @@ async function handleGroupMessage(
   if (text && message.sender?.id && !text.trim().startsWith("/")) {
     await resolveNames(space.id, [message.sender.id]);
     logChat(space.id, message.sender.id, aliasFor(message.sender.id), text);
+    if (isGroupSpace(space, message)) {
+      lastGroup = space;
+      noteGroup(space.id);
+      addMessage(aliasFor(message.sender.id), text);
+    }
   }
 
   // Dedicated lines deliver an "addMember" event when the bot is added; shared
@@ -272,6 +285,7 @@ async function handleGroupMessage(
     const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];
     pendingPlan = plan && byName(plan.target) ? plan : undefined;
     openBet(aliasFor(target), item, space, players);
+    logEvent("prediction", `Bet opened for ${players.length} players`);
 
     await replyIn(
       space,
@@ -535,6 +549,7 @@ async function handleDM(
       const firstTime = !state.picks.has(me);
       pick(me, intent);
       if (firstTime) await transfer(me, POT, STAKE);
+      if (firstTime) logEvent("chips", `${aliasFor(me)} locked in ${intent.toUpperCase()}`);
       await replyIn(
         space,
         `locked in: ${intent} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(me)})`,

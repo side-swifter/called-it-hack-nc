@@ -5,6 +5,8 @@ import { extname, join, normalize } from "node:path";
 import { balanceOf, leaderboard, POT } from "./chips.js";
 import { NAMES, aliasFor, saveNames } from "./config.js";
 import { getState } from "./state.js";
+import { logEvent } from "./events.js";
+import * as game from "./snapshot.js";
 
 export interface ResultRecord {
   at: string;
@@ -42,6 +44,7 @@ async function nameFor(id: string): Promise<string | undefined> {
 
 export function recordResult(r: Omit<ResultRecord, "at">): void {
   results.unshift({ at: new Date().toISOString(), ...r });
+  logEvent("chips", `Bet settled: ${r.winners.length ? r.winners.join(", ") + " called it" : "nobody called it"} (pot ${r.pot})`);
   if (results.length > 20) results.pop();
 }
 
@@ -59,9 +62,52 @@ const TYPES: Record<string, string> = {
 };
 
 export function startApi(knownIds: () => string[], port = Number(process.env.API_PORT || 8787)): void {
+  game.bindKnown(knownIds);
   const server = createServer(async (req, res) => {
     const url = (req.url ?? "/").split("?")[0];
     res.setHeader("access-control-allow-origin", "*");
+
+    if (url === "/api/state" && req.method === "GET") {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(game.snapshot()));
+      return;
+    }
+
+    if (req.method === "OPTIONS") {
+      res.setHeader("access-control-allow-headers", "content-type");
+      res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
+    if (req.method === "POST" && url.startsWith("/api/")) {
+      let raw = "";
+      for await (const c of req) raw += c;
+      let body: any = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {}
+      let out: { status: number; body: unknown } = { status: 404, body: { error: "Unknown route" } };
+      try {
+        const sel = url.match(/^\/api\/predictions\/([^/]+)\/select$/);
+        if (sel) out = await game.select(sel[1], body.choice);
+        else if (url === "/api/demo/start") out = game.startDemo();
+        else if (url === "/api/demo/generate") out = await game.generate();
+        else if (url === "/api/demo/simulate-picks") out = await game.simulatePicks();
+        else if (url === "/api/demo/lock") out = game.lock();
+        else if (url === "/api/demo/resolve") out = await game.resolve(body.outcome);
+        else if (url === "/api/demo/reset") out = game.reset();
+        else if (url === "/api/rooms/messages") out = await game.postMessage(body.text);
+      } catch (e) {
+        console.error("[api] error:", e);
+        out = { status: 500, body: { error: "Server error" } };
+      }
+      res.statusCode = out.status;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(out.body));
+      return;
+    }
 
     if (url === "/api/leaderboard") {
       const ids = knownIds().filter((h) => /^\d+$/.test(h));
