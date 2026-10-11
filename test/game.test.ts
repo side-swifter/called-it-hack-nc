@@ -46,12 +46,38 @@ test("no picks at all settles to an empty pot", () => {
   assert.equal(s.refundAll, true);
 });
 
-test("target bonus only applies when the outcome beat the majority", () => {
-  const minorityWins = computeSettlement(picks([["a", "yes"], ["b", "yes"], ["c", "yes"], ["d", "no"]]), "no", 30, 0.1);
-  assert.equal(minorityWins.pot, 120);
-  assert.equal(minorityWins.targetBonus, 12);
-  assert.equal(minorityWins.payout, 108);
-  const majorityWins = computeSettlement(picks([["a", "yes"], ["b", "yes"], ["c", "no"]]), "yes", 30, 0.1);
-  assert.equal(majorityWins.targetBonus, 0);
-  assert.equal(majorityWins.payout, 45);
+test("target defends: the YES bettors' stakes go to the target and the NO bettors", () => {
+  const s = computeSettlement(picks([["a", "yes"], ["b", "yes"], ["c", "no"], ["d", "no"]]), "no", 30, { refutedByTarget: true });
+  assert.deepEqual(s.winnerIds, ["c", "d"]);
+  assert.equal(s.pot, 120);
+  assert.equal(s.defended, true);
+  assert.equal(s.targetBonus, 30); // 25% of 120
+  assert.equal(s.payout, 45); // (120 - 30) / 2
+});
+
+test("target defends and nobody bet NO: the target takes the whole pot", () => {
+  const s = computeSettlement(picks([["a", "yes"], ["b", "yes"]]), "no", 30, { refutedByTarget: true });
+  assert.equal(s.targetBonus, 60);
+  assert.equal(s.payout, 0);
+  assert.equal(s.refundAll, false);
+});
+
+test("no target bonus when the outcome came from anyone but the target", () => {
+  const s = computeSettlement(picks([["a", "yes"], ["b", "no"]]), "no", 30);
+  assert.equal(s.targetBonus, 0);
+  assert.equal(s.defended, false);
+  assert.equal(s.payout, 60);
+});
+
+test("target defends but everyone bet NO: nobody lost, so no target bonus", () => {
+  const s = computeSettlement(picks([["a", "no"], ["b", "no"]]), "no", 30, { refutedByTarget: true });
+  assert.equal(s.defended, false);
+  assert.equal(s.targetBonus, 0);
+  assert.equal(s.payout, 30);
+});
+
+test("a YES result never pays the target a defense bonus", () => {
+  const s = computeSettlement(picks([["a", "yes"], ["b", "no"]]), "yes", 30, { refutedByTarget: true });
+  assert.equal(s.targetBonus, 0);
+  assert.equal(s.payout, 60);
 });

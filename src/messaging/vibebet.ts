@@ -51,15 +51,9 @@ function note(spaceId: string, line: string): void {
 }
 
 const betsSent = new Map<string, string>();
-// The target holds a decoy bet, so nothing they send can settle the real one.
+// With decoys on, the target is DM'd a bet about someone else (their stake is refunded at settlement).
 let decoyHolder: string | undefined;
 let targetId: string | undefined;
-const DECOY_REJECTS = [
-  "lol nice try, that's not it 🙄",
-  "that's not proof of anything, stop larping",
-  "hmm i'm gonna need way more than that 👀",
-  "sure bud. not buying it",
-];
 // Optional extras, off unless enabled in .env: they add moving parts that are easy to trip over in a demo.
 const DECOY_ON = process.env.DECOY_ENABLED === "true";
 const DARE_ON = process.env.WEEKLY_DARE === "true";
@@ -379,28 +373,33 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
   const sender = message.sender?.id;
   const state = getState();
   if (!sender || state.phase !== "open" || !state.photoFrom.has(sender)) return false;
-  if (sender === decoyHolder) {
-    state.photoFrom.delete(sender);
-    logEvent("agent", `Proof from ${aliasFor(sender)} rejected`, state.betId, "failed");
-    await replyIn(space, DECOY_REJECTS[Math.floor(Math.random() * DECOY_REJECTS.length)]);
-    return true;
-  }
+  const isTarget = sender === targetId;
   const verdict = await judgeProof({
     target: state.targetAlias ?? "someone",
     item: state.item,
     text,
     recent: history.get(space.id) ?? [],
+    sender: aliasFor(sender),
+    senderIsTarget: isTarget,
   });
   await replyIn(space, verdict.reply);
-  logEvent("agent", `Proof from ${aliasFor(sender)} ${verdict.accept ? "accepted" : "rejected"}`, state.betId, verdict.accept ? "ok" : "failed");
+  logEvent(
+    "agent",
+    `Proof from ${aliasFor(sender)} ${verdict.accept ? `accepted (${verdict.claim === "didnt" ? "shows it did NOT happen" : "shows it happened"})` : "rejected"}`,
+    state.betId,
+    verdict.accept ? "ok" : "failed",
+  );
   if (verdict.accept) {
     state.photoFrom.delete(sender);
-    if (addProof(sender)) await announceResult();
+    if (verdict.claim === "didnt") {
+      // Evidence that it did NOT happen settles the bet NO. If the target is the one who shows it, they defend themselves.
+      await announceResult("no", { refutedByTarget: isTarget });
+    } else if (addProof(sender)) {
+      await announceResult("yes");
+    }
   }
   return true;
 }
-
-const REBEL_CUT = 0.1; // share of the pot the target earns for going against the majority
 
 // Auto-settles "no" if nobody proves it before the deadline. The captured state
 // object guards against a timer from an earlier game settling a later one.
@@ -417,7 +416,7 @@ function armDeadline(): void {
   setDeadline(timer, Date.now() + ms);
 }
 
-async function announceResult(outcome: Outcome = "yes"): Promise<void> {
+async function announceResult(outcome: Outcome = "yes", opts: { refutedByTarget?: boolean } = {}): Promise<void> {
   const state = getState();
   const group = state.groupSpace;
   if (state.phase !== "open") return;
@@ -434,12 +433,12 @@ async function announceResult(outcome: Outcome = "yes"): Promise<void> {
   }
   decoyHolder = undefined;
   // Everyone's stakes are in the pot. Winners split it; if nobody won, everyone is refunded.
-  const s = computeSettlement(state.picks, outcome, STAKE, targetId ? REBEL_CUT : 0);
+  const s = computeSettlement(state.picks, outcome, STAKE, { refutedByTarget: Boolean(opts.refutedByTarget && targetId) });
   const winners = s.winnerIds.map(aliasFor);
   const losers = s.loserIds.map(aliasFor);
   if (s.targetBonus) {
     await transfer(POT, targetId!, s.targetBonus);
-    logEvent("chips", `${target} earned ${s.targetBonus} chips for going against the crowd`, betId);
+    logEvent("chips", `${target} earned ${s.targetBonus} chips for proving it did not happen`, betId);
   }
   if (s.refundAll) {
     for (const h of s.loserIds) await transfer(POT, h, STAKE);
@@ -454,12 +453,16 @@ async function announceResult(outcome: Outcome = "yes"): Promise<void> {
   recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome, betId });
   const players = [...state.players];
   const headline =
-    outcome === "yes" ? `🚨 ${target} CALLED IT. ${state.item} confirmed 📸` : `🧊 ${target} did not ${state.item}. no show.`;
+    outcome === "yes"
+      ? `🚨 ${target} CALLED IT. ${state.item} confirmed 📸`
+      : s.defended
+        ? `🛡️ ${target} shut it down. did NOT ${state.item}, proof accepted.`
+        : `🧊 ${target} did not ${state.item}. no show.`;
   const announcement =
     `${headline}\n` +
-    (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
-    (losers.length && winners.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
-    (s.targetBonus ? `${target} went against the crowd and walked off with ${s.targetBonus} chips 😈\n` : "") +
+    (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : s.defended ? "" : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
+    (losers.length && (winners.length || s.defended) ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
+    (s.targetBonus ? `${target} defended themselves and walked off with ${s.targetBonus} chips 😈\n` : "") +
     `pot was ${s.pot} chips.\n🏦 ` +
     leaderboard([...state.picks.keys(), ...(s.targetBonus && targetId ? [targetId] : [])]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · ");
 

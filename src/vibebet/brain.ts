@@ -412,30 +412,50 @@ export async function classifyGroupAction(
 }
 
 export interface Verdict {
+  /** The message presents real evidence one way or the other. */
   accept: boolean;
+  /** What the evidence shows: the thing happened ("did") or it did not ("didnt"). */
+  claim: "did" | "didnt" | "none";
   reply: string;
 }
 
-// The photo isn't analyzed; the bot judges the message sent right after it, like a skeptical friend.
-export async function judgeProof(opts: { target: string; item: string; text: string; recent: string[] }): Promise<Verdict> {
-  const { target, item, text, recent } = opts;
-  const fallbackAccept = /\b(proof|here'?s|see|look|did|wearing|wore|there)\b/i.test(text) && !/\b(jk|lol|larp|fake|not)\b/i.test(text);
-  const fallback: Verdict = fallbackAccept
-    ? { accept: true, reply: "dang he acc did it 👀" }
-    : { accept: false, reply: "stop larping, that's not proof 🙄" };
+// The photo isn't analyzed; the bot judges what the message says about it, like a skeptical friend.
+export async function judgeProof(opts: {
+  target: string;
+  item: string;
+  text: string;
+  recent: string[];
+  sender?: string;
+  senderIsTarget?: boolean;
+}): Promise<Verdict> {
+  const { target, item, text, recent, sender, senderIsTarget } = opts;
+  const presents = /\b(proof|evidence|here'?s|see|look|check|wearing|wore|there|pic|photo)\b/i.test(text);
+  const denies = /\b(not|isn'?t|didn'?t|did not|never|no)\b/i.test(text);
+  const joking = /\b(jk|lol|larp|fake|kidding)\b/i.test(text);
+  const fallback: Verdict = joking || !presents
+    ? { accept: false, claim: "none", reply: "stop larping, that's not proof 🙄" }
+    : denies
+      ? { accept: true, claim: "didnt", reply: `proof accepted: ${target} did NOT ${item}. settling it 🧊` }
+      : { accept: true, claim: "did", reply: "dang he acc did it 👀" };
   if (!configured()) return fallback;
   try {
     const prompt = [
       `You are a skeptical, funny friend judging proof for the bet "will ${target} ${item} today?". Someone just sent a photo and then wrote a message about it. You can't see the photo, so judge ONLY how they present it.`,
-      `ACCEPT if the message presents the photo as evidence that it happened: it says "proof", "evidence", "here's the proof", "look", "see", "he did it", "told you", or describes ${target} doing it (${item}). Being brief is fine. REJECT only if it's a throwaway that never claims anything ("here u go", "ok", "lol", "idk", "hi"), is clearly joking or admitting it's fake, or is unrelated to the bet.`,
+      `The sender is ${sender ?? "a player"}${senderIsTarget ? `, who IS ${target}, the person the bet is about, so they may be defending themselves` : ""}.`,
+      `claim = "did" if the message presents the photo as evidence that ${target} DID it (e.g. "here's the proof", "look he's wearing it", "told you").`,
+      `claim = "didnt" if the message presents the photo as evidence that ${target} did NOT do it (e.g. "no i'm not, here's proof", "look, i'm wearing a white shirt", "he's not wearing it, see?", "i did not wear that, proof").`,
+      `claim = "none" if it's a throwaway that never claims anything ("here u go", "ok", "lol", "hi"), is clearly joking or admitting it's fake, or is unrelated to the bet.`,
       `Chat so far:\n${recent.slice(-8).join("\n") || "(none)"}`,
       `Their message: "${text}"`,
-      `Reply with JSON only: {"accept": true or false, "reply": "<one short lowercase text-message reply in character, max 15 words, at most one emoji; if rejecting, call them out for larping; if accepting, be impressed, like 'dang he acc did it'>"}`,
+      `Reply with JSON only: {"claim": "did" or "didnt" or "none", "reply": "<one short lowercase text-message reply in character, max 15 words, at most one emoji; if none, call them out for larping; if did, be impressed; if didnt, be surprised the bet failed>"}`,
     ].join("\n");
     const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
     const raw = String(rows[0]?.R ?? "");
     const json = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-    return { accept: json.accept === true, reply: String(json.reply || fallback.reply) };
+    const claim = json.claim === "did" || json.claim === "didnt" ? json.claim : "none";
+    // "didn't" replies are fixed: the model tends to mix up who won, and the result post follows right after.
+    const reply = claim === "didnt" ? `proof accepted: ${target} did NOT ${item}. settling it 🧊` : clean(String(json.reply || fallback.reply));
+    return { accept: claim !== "none", claim, reply };
   } catch (e) {
     console.error("[cortex] judge failed:", (e as Error).message);
     return fallback;
