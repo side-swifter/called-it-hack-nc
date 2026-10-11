@@ -22,5 +22,5 @@ ThemeData aeroTheme() => ThemeData(
       fontFamily: 'PlusJakarta',
       scaffoldBackgroundColor: const Color(0xFF8FD3F4),
       colorScheme: ColorScheme.fromSeed(seedColor: Aero.sky),
-      textTheme: ThemeData.light().textTheme.apply(bodyColor: Aero.ink, displayColor: Aero.ink),
+      textTheme: ThemeData.light().textTheme.apply(fontFamily: 'PlusJakarta', bodyColor: Aero.ink, displayColor: Aero.ink),
     );

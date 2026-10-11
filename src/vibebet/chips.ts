@@ -97,6 +97,11 @@ export async function transfer(from: string, to: string, amount: number): Promis
   void mirror(from, to, amount);
 }
 
+export function setBalance(handle: string, amount: number): void {
+  balances.set(handle, amount);
+  save();
+}
+
 export function leaderboard(handles: string[]): [string, number][] {
   return handles.map((h) => [h, balanceOf(h)] as [string, number]).sort((a, b) => b[1] - a[1]);
 }

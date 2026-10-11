@@ -1,9 +1,9 @@
 // App-facing game model: one prediction at a time, chips moved through chips.ts, state served as Snapshot.
-import { POT, balanceOf, transfer } from "./chips.js";
+import { POT, balanceOf, setBalance, transfer } from "./chips.js";
 import { NAMES, aliasFor } from "./config.js";
 import { planBets, recentChat } from "./brain.js";
 import { ITEMS } from "./config.js";
-import { addMessage, getActivity, getMessages, hasSender, logEvent, sendToGroup } from "./events.js";
+import { addMessage as addMsg, getActivity, getMessages, hasSender, logEvent as logEv, removeDemoEntries, sendToGroup } from "./events.js";
 
 const ENTRY = 2;
 const INITIAL = 20;
@@ -19,7 +19,7 @@ interface Pred {
   question: string;
   yesPct: number;
   reasoning: string;
-  source: "snowflake" | "scripted";
+  source: "snowflake" | "scripted" | "demo";
   stage: Stage;
   picks: Map<string, Pick>;
   groupId?: string;
@@ -29,8 +29,14 @@ let result: any;
 let started = false;
 let generating = false;
 let counter = 0;
+let seeded = false; // demo seed active: "me" is Alex and the roster is the three demo players
 let knownIds: () => string[] = () => [];
 let groupHint = ""; // most recent group chat id
+
+// While the demo seed is active, everything logged is tagged so reset can remove it.
+type Opts = { at?: Date; demo?: boolean };
+const ev = (kind: Parameters<typeof logEv>[0], text: string, predictionId?: string, status: Parameters<typeof logEv>[3] = "ok", opts: Opts = {}): void => logEv(kind, text, predictionId, status, { demo: seeded, ...opts });
+const msg = (sender: string, text: string, isAgent = false, opts: Opts = {}): void => addMsg(sender, text, isAgent, { demo: seeded, ...opts });
 
 export function bindKnown(fn: () => string[]): void {
   knownIds = fn;
@@ -40,8 +46,8 @@ export function noteGroup(id: string): void {
 }
 
 const nameOf = (id: string): string => DEMO_PADS.find(([i]) => i === id)?.[1] ?? aliasFor(id);
-const realPlayers = (): string[] => knownIds().filter((h) => NAMES.has(h));
-export const hostId = (): string | undefined => process.env.HOST_ID || realPlayers()[0] || knownIds()[0];
+const realPlayers = (): string[] => (seeded ? DEMO_PADS.map(([i]) => i) : knownIds().filter((h) => NAMES.has(h)));
+export const hostId = (): string | undefined => (seeded ? "demo-alex" : process.env.HOST_ID || realPlayers()[0] || knownIds()[0]);
 const status = (v: unknown): string => (v ? "connected" : "unavailable");
 
 export function snapshot(): any {
@@ -109,7 +115,7 @@ const fail = (status: number, error: string): Out => ({ status, body: { error } 
 export function startDemo(): Out {
   if (pred?.stage === "settling") return fail(409, "Settlement is still processing.");
   started = true;
-  logEvent("agent", "Demo session started");
+  ev("agent", "Demo session started");
   return ok();
 }
 
@@ -137,11 +143,11 @@ export async function generate(): Promise<Out> {
       groupId: groupHint || undefined,
     };
     result = undefined;
-    logEvent("prediction", `${real ? "Snowflake" : "Sample"} prediction created: ${question}`, pred.id);
-    const msg = `New prediction! ${question} Reply YES or NO in the app. ${ENTRY} demo chips per pick.`;
-    addMessage("Photon AI", msg, true);
-    const sent = await sendToGroup(msg);
-    logEvent("agent", sent ? "Photon announcement sent" : "Photon announcement not sent (no live group)", pred.id, sent ? "ok" : "failed");
+    ev("prediction", `${real ? "Snowflake" : "Sample"} prediction created: ${question}`, pred.id);
+    const text = `New prediction! ${question} Reply YES or NO in the app. ${ENTRY} demo chips per pick.`;
+    msg("Photon AI", text, true);
+    const sent = await sendToGroup(text);
+    ev("agent", sent ? "Photon announcement sent" : "Photon announcement not sent (no live group)", pred.id, sent ? "ok" : "failed");
     return ok({ predictionId: pred.id, source: pred.source });
   } finally {
     generating = false;
@@ -155,8 +161,8 @@ async function addPick(id: string, choice: "YES" | "NO"): Promise<Out> {
   if (balanceOf(id) < ENTRY) return fail(400, "Not enough demo chips.");
   pred.picks.set(id, { choice, amount: ENTRY }); // claimed synchronously so double taps can't double-charge
   await transfer(id, POT, ENTRY);
-  logEvent("chips", `${nameOf(id)} selected ${choice}`, pred.id);
-  logEvent("chips", `Pool reached ${[...pred.picks.values()].reduce((s, p) => s + p.amount, 0)} chips`, pred.id);
+  ev("chips", `${nameOf(id)} selected ${choice}`, pred.id);
+  ev("chips", `Pool reached ${[...pred.picks.values()].reduce((s, p) => s + p.amount, 0)} chips`, pred.id);
   return ok();
 }
 
@@ -181,7 +187,7 @@ export async function simulatePicks(): Promise<Out> {
 export function lock(): Out {
   if (!pred || pred.stage !== "open") return fail(409, "Nothing to lock.");
   pred.stage = "locked";
-  logEvent("prediction", "Picks locked", pred.id);
+  ev("prediction", "Picks locked", pred.id);
   return ok();
 }
 
@@ -193,7 +199,7 @@ export async function resolve(outcome: unknown): Promise<Out> {
   if (!pred.picks.size) return fail(409, "Nobody has picked yet.");
   pred.stage = "settling"; // guards against a second resolve
   const p = pred;
-  logEvent("prediction", `Outcome confirmed: ${outcome}`, p.id);
+  ev("prediction", `Outcome confirmed: ${outcome}`, p.id);
   const entries = [...p.picks];
   const pool = entries.reduce((s, [, x]) => s + x.amount, 0);
   const winners = entries.filter(([, x]) => x.choice === outcome);
@@ -205,7 +211,7 @@ export async function resolve(outcome: unknown): Promise<Out> {
     entries.forEach(([id, x]) => payouts.set(id, x.amount)); // nobody right: refund
   }
   for (const [id, amt] of payouts) await transfer(POT, id, amt);
-  logEvent("chips", `Settlement completed: ${pool} chips distributed`, p.id);
+  ev("chips", `Settlement completed: ${pool} chips distributed`, p.id);
   const winNames = winners.map(([id]) => nameOf(id));
   const announcement = winners.length
     ? `Confirmed! ${outcome} was right. ${winNames.join(" and ")} called it!`
@@ -231,27 +237,68 @@ export async function resolve(outcome: unknown): Promise<Out> {
   };
   result = r;
   p.stage = "settled";
-  addMessage("Photon AI", announcement, true);
+  msg("Photon AI", announcement, true);
   const sent = await sendToGroup(announcement);
   r.announcementStatus = sent ? "delivered" : "failed";
   r.photonOk = sent;
-  logEvent("agent", sent ? "Photon result announcement delivered" : "Photon result announcement failed", p.id, sent ? "ok" : "failed");
+  ev("agent", sent ? "Photon result announcement delivered" : "Photon result announcement failed", p.id, sent ? "ok" : "failed");
   return ok({ result: r });
 }
 
-export function reset(): Out {
+export async function reset(): Promise<Out> {
   if (pred?.stage === "settling") return fail(409, "Settlement is processing. Try again in a moment.");
+  if (pred && (pred.stage === "open" || pred.stage === "locked")) {
+    for (const [id, p] of pred.picks) await transfer(POT, id, p.amount); // give unsettled stakes back
+  }
+  if (seeded) {
+    for (const [id] of DEMO_PADS) setBalance(id, INITIAL);
+    setBalance(POT, 0);
+    removeDemoEntries();
+    seeded = false;
+  }
   pred = undefined;
   result = undefined;
   started = false;
-  logEvent("agent", "Demo reset to baseline");
+  ev("agent", "Demo reset to baseline");
   return ok();
+}
+
+// Puts the app in the populated state from the design mockups: three picks, pool of 6, chat feed filled in.
+export async function seed(): Promise<Out> {
+  if (seeded && pred) return ok({ already: true, predictionId: pred.id });
+  if (generating) return fail(409, "Already generating.");
+  if (pred && pred.stage !== "settled") return fail(409, "A prediction is already live. Resolve or reset it first.");
+  seeded = true;
+  started = true;
+  result = undefined;
+  for (const [id] of DEMO_PADS) setBalance(id, INITIAL);
+  pred = {
+    id: `P${String(++counter).padStart(3, "0")}`,
+    question: "Will Sam say 'ship it' before the demo ends?",
+    yesPct: 68,
+    reasoning: "Sam has repeated the phrase 'ship it' several times in recent project discussions, so a repeat before the demo ends is likely.",
+    source: "demo",
+    stage: "open",
+    picks: new Map(),
+  };
+  const id = pred.id;
+  const ago = (min: number): Date => new Date(Date.now() - min * 60_000);
+  ev("prediction", "Demo prediction loaded: Will Sam say 'ship it' before the demo ends?", id, "ok", { at: ago(5), demo: true });
+  ev("agent", "Photon announcement shown in the room", id, "ok", { at: ago(4), demo: true });
+  msg("Alex", "He's definitely going to say it again.", false, { at: ago(3), demo: true });
+  msg("Maya", "I'm taking YES. Sam loves that line right before demos.", false, { at: ago(2), demo: true });
+  msg("Jordan", "No way. He knows everyone is waiting for it.", false, { at: ago(1), demo: true });
+  msg("Photon AI Agent", "Prediction is live! 2 demo chips per pick. Group pool: 6 chips.", true, { at: new Date(), demo: true });
+  for (const [pid, choice] of [["demo-alex", "YES"], ["demo-maya", "YES"], ["demo-jordan", "NO"]] as const) {
+    if ((await addPick(pid, choice)).status !== 200) return fail(500, "Seeding failed.");
+  }
+  return ok({ predictionId: id });
 }
 
 export async function postMessage(text: unknown): Promise<Out> {
   if (typeof text !== "string" || !text.trim()) return fail(400, "Message is empty.");
   const sent = await sendToGroup(text.trim());
   if (!sent) return fail(503, "Couldn't deliver: no live group chat yet.");
-  addMessage(nameOf(hostId() ?? "host"), text.trim());
+  msg(nameOf(hostId() ?? "host"), text.trim());
   return ok({ delivered: true });
 }

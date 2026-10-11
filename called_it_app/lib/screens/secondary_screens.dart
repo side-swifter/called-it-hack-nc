@@ -24,10 +24,20 @@ class _Page extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                   child: Glass(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     child: Row(children: [
-                      IconButton(icon: const Icon(Icons.arrow_back_ios_new, size: 18), onPressed: () => Navigator.of(context).maybePop()),
-                      Expanded(child: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900))),
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).maybePop(),
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(shape: BoxShape.circle, gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFF45B8F5), Aero.skyDeep]), border: Border.all(color: Colors.white, width: 1.5)),
+                          child: const Icon(Icons.arrow_back_ios_new, size: 16, color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Aero.ink))),
+                      const Pill('CalledIt'),
                     ]),
                   ),
                 ),
@@ -55,6 +65,9 @@ Prediction? _find(Snapshot s, String? id) {
 
 void _toast(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(m)));
 
+/// Small caps section label, like "PERSONAL SANDBOX BALANCE" in the mockups.
+Widget _label(String t) => Text(t.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: .8, color: Aero.inkSoft));
+
 Widget _empty(String text) => Glass(child: Center(child: Padding(padding: const EdgeInsets.all(12), child: Text(text, textAlign: TextAlign.center))));
 
 class InsightsScreen extends StatefulWidget {
@@ -79,7 +92,7 @@ class _InsightsState extends State<InsightsScreen> {
           return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Glass(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('PREDICTION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Aero.inkSoft)),
+                _label('Prediction'),
                 const SizedBox(height: 6),
                 Text('“${p.question}”', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 12),
@@ -95,7 +108,7 @@ class _InsightsState extends State<InsightsScreen> {
             const SizedBox(height: 12),
             Glass(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Observed pattern', style: TextStyle(fontWeight: FontWeight.w900)),
+                _label('Observed pattern'),
                 const SizedBox(height: 6),
                 Text(p.reasoning.isEmpty ? 'No reasoning was recorded for this prediction.' : p.reasoning),
               ]),
@@ -179,7 +192,7 @@ class PredictionDetailsScreen extends StatelessWidget {
             Glass(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
-                  const Expanded(child: Text('Picks', style: TextStyle(fontWeight: FontWeight.w900))),
+                  Expanded(child: _label('Picks')),
                   Pill('Pool: ${p.pool} chips', color: Aero.gold),
                 ]),
                 const SizedBox(height: 8),
@@ -230,7 +243,7 @@ class _SettingsState extends State<SettingsScreen> {
 
   Widget _section(String title, List<Widget> kids) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
-        child: Glass(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.w900)), const SizedBox(height: 8), ...kids])),
+        child: Glass(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [_label(title), const SizedBox(height: 8), ...kids])),
       );
 
   @override
@@ -262,7 +275,7 @@ class _SettingsState extends State<SettingsScreen> {
               const Text('The AI companion only reads messages from people in this group chat who opted in. It uses them to suggest harmless predictions. You can leave the group at any time to stop analysis.'),
             ]),
             _section('Notifications', [
-              SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('Prediction and result alerts'), value: notifications, onChanged: (v) => setState(() => notifications = v)),
+              SwitchListTile(activeTrackColor: Aero.sky, contentPadding: EdgeInsets.zero, title: const Text('Prediction and result alerts'), value: notifications, onChanged: (v) => setState(() => notifications = v)),
             ]),
             _section('Demo information', [
               const Text('CalledIt uses free fictional chips with no cash value. Balances are recorded in the Capital One Nessie sandbox.'),
@@ -321,7 +334,7 @@ class _GreenState extends State<GreenMomentsScreen> {
             const SizedBox(height: 12),
             Glass(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Green activity', style: TextStyle(fontWeight: FontWeight.w900)),
+                _label('Green activity'),
                 const SizedBox(height: 6),
                 if (green.isEmpty) const Text('No Green Moments yet.'),
                 for (final a in green) Padding(padding: const EdgeInsets.symmetric(vertical: 3), child: Text(a.text)),

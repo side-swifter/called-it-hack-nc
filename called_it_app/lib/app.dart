@@ -70,32 +70,55 @@ class _NavBar extends StatelessWidget {
   final ValueChanged<int> onTap;
   @override
   Widget build(BuildContext context) {
-    const items = [(Icons.home_outlined, 'Home'), (Icons.chat_bubble_outline, 'Room'), (Icons.bolt_outlined, 'Activity'), (Icons.attach_money, 'Chips')];
+    // (inactive icon, active icon, label)
+    const items = [
+      (Icons.home_outlined, Icons.home_rounded, 'Home'),
+      (Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, 'Room'),
+      (Icons.bolt_outlined, Icons.bolt_rounded, 'Activity'),
+      (Icons.monetization_on_outlined, Icons.monetization_on_rounded, 'Chips'),
+    ];
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
       child: Glass(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 6),
-        radius: 26,
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 8),
+        radius: 28,
         child: Row(children: [
           for (var i = 0; i < items.length; i++)
             Expanded(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () => onTap(i),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: i == index ? BoxDecoration(borderRadius: BorderRadius.circular(18), color: Aero.aqua.withValues(alpha: .35), border: Border.all(color: Colors.white)) : null,
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(items[i].$1, color: i == index ? Aero.skyDeep : Aero.inkSoft),
-                    Text(items[i].$2, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: i == index ? Aero.skyDeep : Aero.inkSoft)),
-                  ]),
-                ),
+                child: Center(child: i == index ? _active(items[i]) : _inactive(items[i])),
               ),
             ),
         ]),
       ),
     );
   }
+
+  Widget _active((IconData, IconData, String) it) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD9F1FF), Color(0xFFA9DBFA)]),
+          border: Border.all(color: Colors.white, width: 1.4),
+          boxShadow: const [BoxShadow(color: Color(0x330B6FC2), blurRadius: 8, offset: Offset(0, 3))],
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(it.$2, size: 20, color: Aero.skyDeep),
+          const SizedBox(width: 5),
+          Text(it.$3, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Aero.skyDeep)),
+        ]),
+      );
+
+  Widget _inactive((IconData, IconData, String) it) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(it.$1, size: 24, color: Aero.inkSoft),
+          const SizedBox(height: 2),
+          Text(it.$3, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Aero.inkSoft)),
+        ]),
+      );
 }
 
 /// Helper for screens: `goTab(context, 3)` jumps to Chips.

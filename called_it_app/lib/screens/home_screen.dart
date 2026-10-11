@@ -21,9 +21,11 @@ class HomeScreen extends StatelessWidget {
           return ListView(padding: const EdgeInsets.all(14), children: [
             Glass(
               child: Row(children: [
+                const VbLogo(size: 36),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: Aero.skyDeep))),
+                    GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF1B4766)))),
                     const SizedBox(height: 4),
                     Row(children: [
                       Flexible(child: Text(s.room.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12))),
@@ -32,10 +34,10 @@ class HomeScreen extends StatelessWidget {
                     ]),
                   ]),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 ChipsBadge(s.me.balance, onTap: () => goTab(context, 3)),
                 const SizedBox(width: 6),
-                GestureDetector(onTap: () => Navigator.pushNamed(context, '/settings'), child: const Icon(Icons.account_circle_outlined, color: Aero.skyDeep, size: 28)),
+                GestureDetector(onTap: () => Navigator.pushNamed(context, '/settings'), child: const Icon(Icons.account_circle_outlined, color: Aero.skyDeep, size: 26)),
               ]),
             ),
             if (appState.error != null) const Padding(padding: EdgeInsets.only(top: 8), child: Pill('Showing last confirmed data', color: Aero.orange)),

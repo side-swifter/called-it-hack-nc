@@ -97,7 +97,8 @@ export function startApi(knownIds: () => string[], port = Number(process.env.API
         else if (url === "/api/demo/simulate-picks") out = await game.simulatePicks();
         else if (url === "/api/demo/lock") out = game.lock();
         else if (url === "/api/demo/resolve") out = await game.resolve(body.outcome);
-        else if (url === "/api/demo/reset") out = game.reset();
+        else if (url === "/api/demo/reset") out = await game.reset();
+        else if (url === "/api/demo/seed") out = await game.seed();
         else if (url === "/api/rooms/messages") out = await game.postMessage(body.text);
       } catch (e) {
         console.error("[api] error:", e);
