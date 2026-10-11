@@ -7,6 +7,7 @@ async function main(): Promise<void> {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
+    setTimeout(() => process.exit(0), 3000).unref(); // never hang on shutdown
     await messaging.stop().catch(() => undefined);
     process.exit(0);
   };

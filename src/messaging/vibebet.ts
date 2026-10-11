@@ -172,7 +172,7 @@ async function tgApi(method: string, params: Record<string, string>): Promise<an
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) return undefined;
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/${method}?${new URLSearchParams(params)}`);
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}?${new URLSearchParams(params)}`, { signal: AbortSignal.timeout(10_000) });
     return (await res.json()).result;
   } catch {
     return undefined;
@@ -310,9 +310,12 @@ async function handleGroupMessage(
     }
 
     // Read the indexed chat from Snowflake and let Cortex pick the bet.
+    console.log("[BET] reading chat for", space.id, "players:", players.length);
     const chatLines = await recentChat(space.id);
     const names = players.map(aliasFor);
+    console.log("[BET] planning from", chatLines.length, "chat lines");
     const plan = await planBets(chatLines, names, ITEMS);
+    console.log("[BET] plan:", plan ? `${plan.target} / ${plan.item}` : "none (fallback)");
     const byName = (n?: string) => players.find((p) => aliasFor(p).toLowerCase() === (n ?? "").trim().toLowerCase());
     const target = byName(plan?.target) ?? players[Math.floor(Math.random() * players.length)];
     const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];

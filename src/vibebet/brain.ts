@@ -24,23 +24,31 @@ async function connection(): Promise<snowflake.Connection> {
     role: process.env.SNOWFLAKE_ROLE || undefined,
     clientSessionKeepAlive: true, // otherwise Snowflake drops the idle session after a few hours
   });
-  await new Promise<void>((res, rej) => c.connect((e) => (e ? rej(e) : res())));
+  await new Promise<void>((res, rej) => {
+    const timer = setTimeout(() => rej(new Error("Snowflake login timed out")), 20_000);
+    c.connect((e) => (clearTimeout(timer), e ? rej(e) : res()));
+  });
   conn = c;
   return c;
 }
 
 const DEAD_SESSION = /terminated|not connected|session no longer exists|authentication token has expired|ECONNRESET|socket hang up/i;
 
+const QUERY_TIMEOUT_MS = 30_000;
+
 async function run(sqlText: string, binds: snowflake.Binds = []): Promise<any[]> {
   const exec = async (): Promise<any[]> => {
     const c = await connection();
-    return new Promise((res, rej) => c.execute({ sqlText, binds, complete: (e, _s, rows) => (e ? rej(e) : res(rows ?? [])) }));
+    return new Promise((res, rej) => {
+      const timer = setTimeout(() => rej(new Error("Snowflake query timed out (session terminated?)")), QUERY_TIMEOUT_MS);
+      c.execute({ sqlText, binds, complete: (e, _s, rows) => (clearTimeout(timer), e ? rej(e) : res(rows ?? [])) });
+    });
   };
   try {
     return await exec();
   } catch (e) {
-    if (!DEAD_SESSION.test((e as Error).message ?? "")) throw e;
-    conn = undefined; // the cached session died: reconnect once and retry
+    if (!(DEAD_SESSION.test((e as Error).message ?? "") || /timed out/i.test((e as Error).message ?? ""))) throw e;
+    conn = undefined; // the cached session died or hung: reconnect once and retry
     return exec();
   }
 }
