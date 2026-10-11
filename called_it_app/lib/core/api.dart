@@ -11,7 +11,7 @@ const _apiOverride = String.fromEnvironment('API');
 String get apiBase {
   if (_apiOverride.isNotEmpty) return _apiOverride;
   if (kIsWeb && Uri.base.port == 8787) return Uri.base.origin;
-  return 'http://192.168.1.228:8787';
+  return 'http://100.64.52.94:8787';
 }
 
 /// Single source of UI state. Polls GET /api/state; every mutation goes through [post]
