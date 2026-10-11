@@ -169,10 +169,18 @@ export function warmUp(): void {
 export type Intent = "yes" | "no" | "proof" | "question" | "other";
 
 // Reads what the person means instead of matching exact words.
-export async function classifyIntent(text: string, bet?: string): Promise<Intent> {
+// A message that is nothing but a clear yes or no. Safe to act on in a busy group chat.
+export function quickYesNo(text: string): "yes" | "no" | undefined {
   const t = text.trim().toLowerCase();
   if (/^(yes|yeah|yep|yup|y|bet|in|im in|i'm in|for sure|definitely)[.!]*$/.test(t)) return "yes";
   if (/^(no|nope|nah|n|out|never|no way)[.!]*$/.test(t)) return "no";
+  return undefined;
+}
+
+export async function classifyIntent(text: string, bet?: string): Promise<Intent> {
+  const t = text.trim().toLowerCase();
+  const quick = quickYesNo(text);
+  if (quick) return quick;
   if (!configured()) return /\b(yes|yeah|yep|think so)\b/.test(t) ? "yes" : /\b(no|nope|nah)\b/.test(t) ? "no" : "other";
   try {
     const prompt = `A friend is answering a prop bet in a chat. Bet: "${bet ?? "will someone do a certain thing today"}". Their message: "${text}". Classify the message as exactly one word: yes (they think the bet will happen / they're betting yes), no (they think it won't happen / betting no), proof (they claim it happened or are showing evidence), question (they're asking something), other. Output only that one word.`;

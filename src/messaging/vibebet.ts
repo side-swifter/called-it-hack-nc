@@ -9,7 +9,7 @@ import { addMessage, addResult, logEvent, persist, registerSender, type StoredRe
 import { bindBot, noteGroup, onRealBetOpened, setGroupTitle } from "../vibebet/snapshot.js";
 import { computeSettlement, type Outcome } from "../vibebet/settle.js";
 import { POT, balanceOf, leaderboard, mirrorSeq, nessieConfirmedSince, transfer } from "../vibebet/chips.js";
-import { classifyGroupAction, classifyIntent, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyGroupAction, classifyIntent, quickYesNo, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -340,6 +340,12 @@ async function handleGroupMessage(
   const t = text.trim().toLowerCase();
 
   if (state.phase !== "open") return;
+  // A bare "yes"/"no" in the group counts as a pick; anything wordier is left to DMs so banter never costs chips.
+  const groupPick = quickYesNo(text);
+  if (groupPick && message.sender?.id) {
+    await replyIn(space, await lockIn(message.sender.id, groupPick));
+    return;
+  }
   // Read normal chat: "it happened", "he didn't wear it", "cancel the bet"... (a /resolve typed out still works).
   const action = parseResolve(t) ?? (looksLikeSettle(t) ? await classifyGroupAction(text, { target: state.targetAlias ?? "someone", item: state.item, recent: history.get(space.id) ?? [] }) : "none");
   if (action === "yes" || action === "no") {
