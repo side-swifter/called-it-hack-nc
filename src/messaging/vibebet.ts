@@ -10,7 +10,7 @@ import { bindBot, noteGroup, onRealBetOpened, setGroupTitle } from "../vibebet/s
 import { CATCH_UP_MS, lastSlot, loadDare, nextSlot, saveDare, type DareFile } from "../vibebet/dare.js";
 import { computeSettlement, type Outcome } from "../vibebet/settle.js";
 import { POT, balanceOf, leaderboard, mirrorSeq, nessieConfirmedSince, transfer } from "../vibebet/chips.js";
-import { classifyGroupAction, classifyIntent, quickYesNo, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { classifyGroupAction, classifyIntent, quickYesNo, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet, snowflakeStatus } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -311,9 +311,24 @@ async function handleGroupMessage(
     const plan = await planBets(chatLines, names, ITEMS);
     console.log("[BET] plan:", plan ? `${plan.target} / ${plan.item}` : "none (fallback)");
     const byName = (n?: string) => players.find((p) => aliasFor(p).toLowerCase() === (n ?? "").trim().toLowerCase());
-    const target = byName(plan?.target) ?? players[Math.floor(Math.random() * players.length)];
+    const planned = byName(plan?.target);
+    const snowflakeOn = Boolean(process.env.SNOWFLAKE_ACCOUNT);
+    if (snowflakeOn && (!plan || !planned)) {
+      // Never invent a bet: it has to come from what this group actually said.
+      await replyIn(
+        space,
+        snowflakeStatus() === "unavailable"
+          ? "my brain (snowflake) is down rn 😵 give me a minute and /bet again"
+          : chatLines.length < 3
+            ? "i haven't seen enough in this gc yet 👀 talk about what someone's wearing or doing today, then /bet again"
+            : "couldn't find a clear bet in this chat 🤔 say what someone's wearing (or always does) a few times, then /bet again",
+      );
+      resetState();
+      return;
+    }
+    const target = planned ?? players[Math.floor(Math.random() * players.length)];
     const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];
-    pendingPlan = plan && byName(plan.target) ? plan : undefined;
+    pendingPlan = plan && planned ? plan : undefined;
     openBet(aliasFor(target), item, space, players, target);
     setBetMeta({ planned: Boolean(pendingPlan), reason: pendingPlan?.reason ?? null });
     await onRealBetOpened();
@@ -449,7 +464,7 @@ async function announceResult(outcome: Outcome = "yes", opts: { refutedByTarget?
       logEvent("chips", `${aliasFor(h)} won ${s.payout} chips`, betId);
     }
   }
-  logOutcome(target, state.item, outcome === "yes");
+  logOutcome(target, state.item, outcome === "yes", group?.id);
   recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome, betId });
   const players = [...state.players];
   const headline =
@@ -676,11 +691,11 @@ async function sendPrivateBets(
     const decoyItem = IMPOSSIBLE_ITEMS[Math.floor(Math.random() * IMPOSSIBLE_ITEMS.length)];
     decoyHolder = target;
     setBetMeta({ decoyPerson: aliasFor(decoyPerson), decoyItem });
-    decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem);
+    decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem, undefined, state.groupSpace?.id);
   } else {
     decoyHolder = undefined;
   }
-  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.reason);
+  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.reason, state.groupSpace?.id);
   currentRealBet = realBet;
   console.log("[BETS]", { target: aliasFor(target), real: realBet, decoy: decoyBet ?? "off" });
 

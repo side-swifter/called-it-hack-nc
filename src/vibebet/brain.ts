@@ -130,6 +130,7 @@ async function ensureTables(): Promise<void> {
   if (tableReady) return;
   await run("CREATE TABLE IF NOT EXISTS CALLED_IT_MESSAGES (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, sender STRING, body STRING)");
   await run("CREATE TABLE IF NOT EXISTS CALLED_IT_OUTCOMES (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, target STRING, bet STRING, hit BOOLEAN)");
+  await run("ALTER TABLE CALLED_IT_OUTCOMES ADD COLUMN IF NOT EXISTS chat_id STRING");
   await run("CREATE TABLE IF NOT EXISTS CALLED_IT_CHAT (ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP, chat_id STRING, sender STRING, name STRING, body STRING)");
   tableReady = true;
 }
@@ -184,28 +185,32 @@ export function logMessage(sender: string, body: string): void {
   enqueue("INSERT INTO CALLED_IT_MESSAGES (sender, body) VALUES (?, ?)", [sender, body]);
 }
 
-export function logOutcome(target: string, bet: string, hit: boolean): void {
-  if (!SEED[target]) SEED[target] = [0, 0];
-  SEED[target][1]++;
-  if (hit) SEED[target][0]++;
-  enqueue("INSERT INTO CALLED_IT_OUTCOMES (target, bet, hit) VALUES (?, ?, ?)", [target, bet, hit]);
+const seedKey = (chatId: string | undefined, target: string): string => `${chatId ?? ""}|${target}`;
+
+export function logOutcome(target: string, bet: string, hit: boolean, chatId?: string): void {
+  const k = seedKey(chatId, target);
+  if (!SEED[k]) SEED[k] = [0, 0];
+  SEED[k][1]++;
+  if (hit) SEED[k][0]++;
+  enqueue("INSERT INTO CALLED_IT_OUTCOMES (target, bet, hit, chat_id) VALUES (?, ?, ?, ?)", [target, bet, hit, chatId ?? ""]);
 }
 
 /** Share (0-100) of past bets about `target` that hit, from real outcomes only; undefined with no history. */
-export async function hitRate(target: string): Promise<number | undefined> {
+export async function hitRate(target: string, chatId?: string): Promise<number | undefined> {
+  if (!chatId) return undefined; // history belongs to one group; never mix groups
   let hits = 0;
   let total = 0;
   if (configured()) {
     try {
       await ensureTables();
-      const rows = await run("SELECT COUNT_IF(hit) AS H, COUNT(*) AS T FROM CALLED_IT_OUTCOMES WHERE target = ?", [target]);
+      const rows = await run("SELECT COUNT_IF(hit) AS H, COUNT(*) AS T FROM CALLED_IT_OUTCOMES WHERE target = ? AND chat_id = ?", [target, chatId]);
       total = Number(rows[0]?.T ?? 0);
       hits = Number(rows[0]?.H ?? 0);
     } catch {
       /* fall through to in-memory counts */
     }
   }
-  if (!total && SEED[target]) [hits, total] = SEED[target];
+  if (!total && SEED[seedKey(chatId, target)]) [hits, total] = SEED[seedKey(chatId, target)];
   if (!total) return undefined;
   return Math.min(95, Math.max(5, Math.round((hits / total) * 100)));
 }
@@ -218,59 +223,64 @@ export interface PastBet {
 }
 
 // Stored ts values are TIMESTAMP_NTZ in the Snowflake session's local zone, so shift by the session's own offset to UTC.
-let pastCache: { rows: PastBet[]; at: number; limit: number } | undefined;
-let pastLoading = false;
+const pastCache = new Map<string, { rows: PastBet[]; at: number; limit: number }>();
+const pastLoading = new Set<string>();
 
-function refreshPast(limit: number): void {
-  if (pastLoading || !configured()) return;
-  pastLoading = true;
+// `chatId` limits the list to that group (plus bets recorded before groups were tracked); omit it for every group.
+function refreshPast(limit: number, chatId?: string): void {
+  const key = chatId ?? "*";
+  if (pastLoading.has(key) || !configured()) return;
+  pastLoading.add(key);
   ensureTables()
     .then(() =>
       run(
-        `SELECT TO_VARCHAR(DATEADD('second', DATEDIFF('second', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ, SYSDATE()), ts), 'YYYY-MM-DD"T"HH24:MI:SS.FF3') AS TS, target AS TARGET, bet AS BET, hit AS HIT FROM CALLED_IT_OUTCOMES ORDER BY ts DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+        `SELECT TO_VARCHAR(DATEADD('second', DATEDIFF('second', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ, SYSDATE()), ts), 'YYYY-MM-DD"T"HH24:MI:SS.FF3') AS TS, target AS TARGET, bet AS BET, hit AS HIT FROM CALLED_IT_OUTCOMES ${chatId ? "WHERE chat_id = ? OR chat_id IS NULL OR chat_id = ''" : ""} ORDER BY ts DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+        chatId ? [chatId] : [],
       ),
     )
     .then((rows) => {
-      pastCache = {
+      pastCache.set(key, {
         rows: rows.map((r) => ({ at: `${String(r.TS)}Z`, target: String(r.TARGET), item: String(r.BET), hit: Boolean(r.HIT) })),
         at: Date.now(),
         limit,
-      };
+      });
     })
     .catch((e) => console.error("[snowflake] past bets failed:", (e as Error).message))
     .finally(() => {
-      pastLoading = false;
+      pastLoading.delete(key);
     });
 }
 
 /** Synchronous view of the cache: returns the last known rows and refreshes in the background when stale. */
-export function pastBetsCached(limit = 20): PastBet[] {
+export function pastBetsCached(limit = 20, chatId?: string): PastBet[] {
   if (!configured()) return [];
-  if (!pastCache || Date.now() - pastCache.at > 30_000 || pastCache.limit < limit) refreshPast(limit);
-  return (pastCache?.rows ?? []).slice(0, limit);
+  const c = pastCache.get(chatId ?? "*");
+  if (!c || Date.now() - c.at > 30_000 || c.limit < limit) refreshPast(limit, chatId);
+  return (c?.rows ?? []).slice(0, limit);
 }
 
 /** Real past bet outcomes, newest first. Served from a 30s cache; never throws or waits on Snowflake. */
-export async function pastBets(limit = 20): Promise<PastBet[]> {
-  return pastBetsCached(limit);
+export async function pastBets(limit = 20, chatId?: string): Promise<PastBet[]> {
+  return pastBetsCached(limit, chatId);
 }
 
-async function historyFor(target: string): Promise<[number, number]> {
+async function historyFor(target: string, chatId?: string): Promise<[number, number]> {
+  if (!chatId) return [0, 0]; // no group, no history: never borrow another group's record
   if (configured()) {
     try {
       await ensureTables();
-      const rows = await run("SELECT COUNT_IF(hit) AS H, COUNT(*) AS T FROM CALLED_IT_OUTCOMES WHERE target = ?", [target]);
+      const rows = await run("SELECT COUNT_IF(hit) AS H, COUNT(*) AS T FROM CALLED_IT_OUTCOMES WHERE target = ? AND chat_id = ?", [target, chatId]);
       const total = Number(rows[0]?.T ?? 0);
       if (total > 0) return [Number(rows[0].H), total];
     } catch (e) {
       console.error("[snowflake] history failed:", (e as Error).message);
     }
   }
-  return SEED[target] ?? [0, 0]; // no real history: the bet text just leaves the record out
+  return SEED[seedKey(chatId, target)] ?? [0, 0]; // no real history: the bet text just leaves the record out
 }
 
-export async function writeBet(target: string, item: string, reason?: string): Promise<string> {
-  const [hits, total] = await historyFor(target);
+export async function writeBet(target: string, item: string, reason?: string, chatId?: string): Promise<string> {
+  const [hits, total] = await historyFor(target, chatId);
   const fallback = `🎯 new bet: will ${target} ${item} today? ${total >= 3 ? `history says ${hits}/${total}. ` : ""}reply "yes" or "no" (${STAKE} chips).`;
   if (!configured()) return fallback;
   try {
@@ -528,12 +538,14 @@ export interface BetPlan {
 
 // Cortex reads the group chat and picks who the bet is about, the outfit or habit, and why.
 export async function planBets(chat: string[], names: string[], itemOptions: string[]): Promise<BetPlan | undefined> {
-  if (!configured()) return undefined;
+  if (!configured() || chat.length === 0) return undefined;
   const prompt = [
     "You run prop bets in a friend group chat about whether someone will wear something or do an everyday habit TODAY (an outfit, being late, waking up early, skipping the gym...).",
     `People in the group: ${names.join(", ")}.`,
+    "Below is the chat of THIS group and nothing else. Base the bet ONLY on what is said in it.",
     chatForPrompt(chat, names),
-    "Pick the person and the outfit or habit that the chat makes most interesting: someone who mentioned something they love/hate/always do, got teased, or has a running joke. If the chat gives nothing, pick anyone and one of: " + itemOptions.join(", ") + ".",
+    "Pick the person and the outfit or habit that this chat keeps coming back to: strongly prefer something mentioned several times or by several people (a running joke, someone teased about it, something they said they always do). A topic repeated many times beats a one-off.",
+    `If nothing in the chat points to a specific person and a specific thing they wear or do, answer {"target": null}. Do not invent one. (Example habits only if the chat itself mentions them: ${itemOptions.slice(0, 6).join(", ")}.)`,
     "Also pick a DIFFERENT person for a decoy bet that looks equally natural, with a different claim and its own reason from the chat if possible.",
     `Reply with JSON only: {"target": "<name from the list>", "item": "<a short verb phrase, e.g. wear black pants, or be late to class>", "reason": "<short chat fact, e.g. 'he said he loves black pants'>", "decoyPerson": "<different name from the list>", "decoyItem": "<claim>", "decoyReason": "<short chat fact or empty>"}`,
   ].join("\n");

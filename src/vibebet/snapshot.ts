@@ -78,7 +78,7 @@ function oddsFor(alias: string): number {
   const c = odds.get(alias);
   if (!c || Date.now() - c.at > 60_000) {
     odds.set(alias, { v: c?.v ?? null, at: Date.now() });
-    void hitRate(alias).then((v) => odds.set(alias, { v: v ?? null, at: Date.now() })).catch(() => undefined);
+    void hitRate(alias, groupHint || undefined).then((v) => odds.set(alias, { v: v ?? null, at: Date.now() })).catch(() => undefined);
   }
   return c?.v ?? 50;
 }
@@ -127,7 +127,7 @@ export function snapshot(): any {
     snowflake: snowflakeStatus(),
     nessie: status(process.env.NESSIE_API_KEY),
   };
-  const history = pastBetsCached(20);
+  const history = pastBetsCached(20, groupHint || undefined);
   const record = (name: string): { bets: number; hits: number } => {
     const mine = history.filter((h) => h.target.toLowerCase() === name.toLowerCase());
     return { bets: mine.length, hits: mine.filter((h) => h.hit).length };
