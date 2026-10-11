@@ -1,6 +1,12 @@
+import { execSync } from "node:child_process";
 import { startVibeBetMessaging } from "./messaging/vibebet.js";
 
 async function main(): Promise<void> {
+  let commit = "unknown";
+  try {
+    commit = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {}
+  console.log(`[boot] Called It! code ${commit} started ${new Date().toISOString()}`);
   const messaging = await startVibeBetMessaging();
 
   let stopping = false;

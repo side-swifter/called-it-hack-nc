@@ -264,9 +264,9 @@ async function handleGroupMessage(
     const bet = currentRealBet;
     betsSent.set(poster, bet);
     try {
-      await replyIn(await openDm(app, poster), greet(poster, bet));
+      await replyIn(await openDm(app, poster), bet);
     } catch {
-      pendingBets.set(poster, greet(poster, bet));
+      pendingBets.set(poster, bet);
     }
   }
 
@@ -682,11 +682,6 @@ async function groupPlayers(space: Space, botPhone: string): Promise<string[]> {
   }
 }
 
-/** Each person is greeted by their own name; the bet underneath is identical for everyone except the target's decoy. */
-function greet(handle: string, bet: string): string {
-  return `hey ${aliasFor(handle)} 👀\n${bet}`;
-}
-
 async function sendPrivateBets(
   app: Awaited<ReturnType<typeof Spectrum>>,
   players: string[],
@@ -705,11 +700,11 @@ async function sendPrivateBets(
     const decoyItem = spare[Math.floor(Math.random() * spare.length)];
     decoyHolder = target;
     setBetMeta({ decoyPerson: aliasFor(decoyPerson), decoyItem });
-    decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem, undefined, state.groupSpace?.id);
+    decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem);
   } else {
     decoyHolder = undefined;
   }
-  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.evidence, state.groupSpace?.id);
+  const realBet = await writeBet(aliasFor(target), state.item);
   currentRealBet = realBet;
   console.log("[BETS]", { target: aliasFor(target), real: realBet, decoy: decoyBet ?? "off" });
 
@@ -717,7 +712,7 @@ async function sendPrivateBets(
     players.map(async (handle) => {
       const bet = handle === target && decoyBet ? decoyBet : realBet;
       betsSent.set(handle, bet);
-      const text = greet(handle, bet);
+      const text = bet;
       try {
         await replyIn(await openDm(app, handle), text);
       } catch {

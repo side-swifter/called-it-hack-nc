@@ -279,21 +279,9 @@ async function historyFor(target: string, chatId?: string): Promise<[number, num
   return SEED[seedKey(chatId, target)] ?? [0, 0]; // no real history: the bet text just leaves the record out
 }
 
-/**
- * The bet text is assembled here from real data only: the question, a real quote from this group's chat,
- * and this group's real record if there is one. No AI-written filler. Each recipient gets a greeting by name
- * added when it is sent.
- */
-export async function writeBet(target: string, item: string, evidence?: string, chatId?: string): Promise<string> {
-  const [hits, total] = await historyFor(target, chatId);
-  const lines = [`new bet: will ${target} ${item} today?`];
-  if (evidence) {
-    const i = evidence.indexOf(": ");
-    lines.push(i > 0 ? `${evidence.slice(0, i)} said in the chat: "${evidence.slice(i + 2)}"` : `from the chat: "${evidence}"`);
-  }
-  if (total >= 3) lines.push(`${target} has done it ${hits} of the last ${total} times.`);
-  lines.push(`reply "yes" or "no" (${STAKE} chips)`);
-  return lines.join("\n");
+/** The bet text people get in their DMs: short and plain, the same for everyone (the target gets the decoy instead). */
+export async function writeBet(target: string, item: string): Promise<string> {
+  return `will ${target} ${item} today? yes or no (${STAKE} chips)`;
 }
 
 const CANNED = [
@@ -448,7 +436,7 @@ export async function judgeProof(opts: {
     ? { accept: false, claim: "none", reply: "stop larping, that's not proof 🙄" }
     : denies
       ? { accept: true, claim: "didnt", reply: `proof accepted: ${target} did NOT ${item}. settling it 🧊` }
-      : { accept: true, claim: "did", reply: "dang he acc did it 👀" };
+      : { accept: true, claim: "did", reply: "proof accepted ✅ settling it" };
   if (!configured()) return fallback;
   try {
     const prompt = [
@@ -466,7 +454,7 @@ export async function judgeProof(opts: {
     const json = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
     const claim = json.claim === "did" || json.claim === "didnt" ? json.claim : "none";
     // "didn't" replies are fixed: the model tends to mix up who won, and the result post follows right after.
-    const reply = claim === "didnt" ? `proof accepted: ${target} did NOT ${item}. settling it 🧊` : clean(String(json.reply || fallback.reply));
+    const reply = claim === "didnt" ? `proof accepted: ${target} did NOT ${item}. settling it 🧊` : claim === "did" ? `proof accepted ✅ settling it` : clean(String(json.reply || fallback.reply));
     return { accept: claim !== "none", claim, reply };
   } catch (e) {
     console.error("[cortex] judge failed:", (e as Error).message);
