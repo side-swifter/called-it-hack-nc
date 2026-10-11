@@ -279,19 +279,36 @@ async function historyFor(target: string, chatId?: string): Promise<[number, num
   return SEED[seedKey(chatId, target)] ?? [0, 0]; // no real history: the bet text just leaves the record out
 }
 
+// The same text is sent to several people, so it must read as a bet ABOUT someone, never as a message TO someone.
+const ADDRESSES_SOMEONE = /\b(you|you'?re|youre|you'?ll|your|yours|ur|u)\b|^\W*(yo|hey|hi|sup|okay|ok|aye|bro|dude)\b[\s,.:!…—-]*\w+[\s,.:!…—-]/i;
+
 export async function writeBet(target: string, item: string, reason?: string, chatId?: string): Promise<string> {
   const [hits, total] = await historyFor(target, chatId);
   const fallback = `🎯 new bet: will ${target} ${item} today? ${total >= 3 ? `history says ${hits}/${total}. ` : ""}reply "yes" or "no" (${STAKE} chips).`;
   if (!configured()) return fallback;
-  try {
-    const prompt = `You are a playful, snarky friend in a group chat. Write ONE short iMessage-style prop bet (max 30 words, lowercase, one emoji) asking whether ${target} will ${item} today. ${total >= 3 ? ` Mention their history: it happened ${hits} of the last ${total} times.` : ""} Use ONLY the facts given here, never invent names, surnames, quotes or details.${reason ? ` Also work in this fact from their group chat: ${reason}.` : ""} End with: reply "yes" or "no" (${STAKE} chips). Output only the message.`;
-    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
-    const text = clean(String(rows[0]?.R ?? ""));
-    return text || fallback;
-  } catch (e) {
-    console.error("[cortex] failed:", (e as Error).message);
-    return fallback;
+  const prompt = [
+    `You are a playful, snarky friend in a group chat. Write ONE short prop bet (max 30 words, lowercase, one emoji) about whether ${target} will ${item} today.`,
+    `IMPORTANT: this exact message is sent to several different people, so it is NOT addressed to anyone. Talk ABOUT ${target} in the third person (${target}, he/she/they). Never say "you", "your", "ur" or "u", and never start with a greeting or anyone's name (no "yo ${target.toLowerCase()}", no "hey", no "okay ${target.toLowerCase()}").`,
+    total >= 3 ? `Mention their history: it happened ${hits} of the last ${total} times.` : "",
+    `Use ONLY the facts given here, never invent names, surnames, quotes or details.${reason ? ` Also work in this fact from their group chat: ${reason}.` : ""}`,
+    `The message MUST contain this question word for word, so YES always means it happens: "will ${target} ${item} today?" You can add a short snarky line around it.`,
+    `End with: reply "yes" or "no" (${STAKE} chips). Output only the message.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
+      const text = clean(String(rows[0]?.R ?? ""));
+      const allowed = new Set([String(STAKE), ...(total >= 3 ? [String(hits), String(total)] : [])]);
+      const madeUpNumber = (text.match(/\d+/g) ?? []).some((n) => !allowed.has(n)); // never let the AI invent a stat
+      if (text && !madeUpNumber && !ADDRESSES_SOMEONE.test(text) && text.toLowerCase().includes(`will ${target} ${item} today`.toLowerCase())) return text;
+    } catch (e) {
+      console.error("[cortex] failed:", (e as Error).message);
+      break;
+    }
   }
+  return fallback; // plain third-person template if the AI keeps addressing someone
 }
 
 const CANNED = [
