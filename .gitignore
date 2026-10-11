@@ -12,3 +12,11 @@ ig.csv
 .groups.json
 .dare.json
 .events.json
+
+# local screenshots and scratch images
+/image*.png
+/image*.jp*g
+/images*.jp*g
+/Screenshot*.png
+/IMG_*.png
+/file-*.png

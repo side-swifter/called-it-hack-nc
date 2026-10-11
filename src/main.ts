@@ -16,6 +16,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(() => {
-  console.error("VibeBet failed to start.");
+  console.error("Called It! failed to start.");
   process.exitCode = 1;
 });
