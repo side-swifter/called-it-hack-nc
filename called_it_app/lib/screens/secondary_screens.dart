@@ -37,7 +37,7 @@ class _Page extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       Expanded(child: Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Aero.ink))),
-                      const Pill('CalledIt'),
+                      const Pill('Called It!'),
                     ]),
                   ),
                 ),
@@ -184,7 +184,7 @@ class PredictionDetailsScreen extends StatelessWidget {
                   Pill(stageLabel(p.stage), dot: true),
                   Pill('YES ${p.yesPct}%', color: Aero.yes),
                   Pill('NO ${p.noPct}%', color: Aero.no),
-                  Pill('${p.entryAmount} demo chips per pick', color: Aero.inkSoft),
+                  Pill('${p.entryAmount} chips per pick', color: Aero.inkSoft),
                 ]),
               ]),
             ),
@@ -260,7 +260,7 @@ class _SettingsState extends State<SettingsScreen> {
                 if (me.isHost) const Pill('Stage Host', color: Aero.skyDeep),
               ]),
               const SizedBox(height: 8),
-              Text('${me.balance} demo chips · no cash value'),
+              Text('${me.balance} chips'),
             ]),
             _section('Connected room', [
               Text(snap.room.name, style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -272,13 +272,10 @@ class _SettingsState extends State<SettingsScreen> {
               _status('Capital One Nessie', snap.room.nessie),
             ]),
             _section('Consent', [
-              const Text('The AI companion only reads messages from people in this group chat who opted in. It uses them to suggest harmless predictions. You can leave the group at any time to stop analysis.'),
+              const Text('Called It! only reads messages from people in your group chat and uses them to suggest harmless bets. Leave the group at any time to stop.'),
             ]),
             _section('Notifications', [
               SwitchListTile(activeTrackColor: Aero.sky, contentPadding: EdgeInsets.zero, title: const Text('Prediction and result alerts'), value: notifications, onChanged: (v) => setState(() => notifications = v)),
-            ]),
-            _section('Demo information', [
-              const Text('CalledIt uses free fictional chips with no cash value. Balances are recorded in the Capital One Nessie sandbox.'),
             ]),
             if (me.isHost) GlossyButton(label: 'Host Controls', icon: Icons.tune, onPressed: () => Navigator.of(c).pushNamed('/host')),
           ]);

@@ -47,8 +47,8 @@ class _HostScreenState extends State<HostScreen> {
   }
 
   Future<void> _reset() async {
-    if (!await _confirm('Reset the demo session?', 'Starts a fresh session with baseline balances and an empty pool.', 'Reset Demo')) return;
-    await _run('reset', '/api/demo/reset', ok: 'Demo reset to baseline.');
+    if (!await _confirm('Reset the round?', 'Clears the current round and refunds any stakes.', 'Reset Demo')) return;
+    await _run('reset', '/api/demo/reset', ok: 'Round reset.');
   }
 
   @override
@@ -83,9 +83,9 @@ class _HostScreenState extends State<HostScreen> {
                     const SizedBox(width: 11),
                     const Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('Demo Mode & Controls', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: _ink)),
+                        Text('Host Controls', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15, color: _ink)),
                         SizedBox(height: 2),
-                        Text('Hackathon Live Host Tools', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w500)),
+                        Text('Round tools', style: TextStyle(color: _muted, fontSize: 11, fontWeight: FontWeight.w500)),
                       ]),
                     ),
                     if (s.me.isHost)
@@ -106,12 +106,12 @@ class _HostScreenState extends State<HostScreen> {
                     padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                        const Text('CURRENT SIMULATION STATE', style: _caps),
+                        const Text('CURRENT ROUND', style: _caps),
                         st == 'error'
                             ? const _Live('INTEGRATION ISSUE', Aero.orange)
                             : live
                                 ? const _Live('LIVE READY', Aero.grass)
-                                : const _Live('DEMO READY', Aero.skyDeep),
+                                : const _Live('READY', Aero.skyDeep),
                       ]),
                       const SizedBox(height: 10),
                       Row(children: [
@@ -135,10 +135,10 @@ class _HostScreenState extends State<HostScreen> {
                       Row(children: [
                         Expanded(
                           child: _Gloss(
-                            label: 'Start Demo',
+                            label: 'Start Round',
                             icon: Icons.play_arrow_rounded,
                             loading: b.contains('start'),
-                            onPressed: settling ? null : () => _run('start', '/api/demo/start', ok: 'Demo session started.', fail: "Demo couldn't start. Check the integration status."),
+                            onPressed: settling ? null : () => _run('start', '/api/demo/start', ok: 'Round started.', fail: "Demo couldn't start. Check the integration status."),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -153,11 +153,11 @@ class _HostScreenState extends State<HostScreen> {
                       ]),
                       const SizedBox(height: 9),
                       _Light(
-                        label: allPicked ? '${s.picksLogged}/${s.picksExpected} Picks Recorded' : 'Simulate Participant Picks (${s.picksLogged}/${s.picksExpected})',
+                        label: allPicked ? '${s.picksLogged}/${s.picksExpected} Picks Recorded' : 'Add Test Picks (${s.picksLogged}/${s.picksExpected})',
                         icon: Icons.groups,
                         color: Aero.skyDeep,
                         loading: b.contains('sim'),
-                        onPressed: !picksOpen || allPicked ? null : () => _run('sim', '/api/demo/simulate-picks', ok: 'Demo selections confirmed.'),
+                        onPressed: !picksOpen || allPicked ? null : () => _run('sim', '/api/demo/simulate-picks', ok: 'Test picks added.'),
                       ),
                       const SizedBox(height: 9),
                       Row(children: [
@@ -166,8 +166,8 @@ class _HostScreenState extends State<HostScreen> {
                         Expanded(child: _Gloss(label: 'Resolve NO', icon: Icons.close_rounded, color: const Color(0xFFF07B1D), loading: b.contains('resolve'), onPressed: canResolve ? () => _resolve('NO') : null)),
                       ]),
                       const SizedBox(height: 9),
-                      _Light(label: 'Reset Demo to Baseline', icon: Icons.refresh, color: _muted, loading: b.contains('reset'), onPressed: settling ? null : _reset),
-                      if (settling) const Padding(padding: EdgeInsets.only(top: 8), child: Text('Processing demo chip transfers...', style: TextStyle(fontSize: 12, color: _muted))),
+                      _Light(label: 'Reset Round', icon: Icons.refresh, color: _muted, loading: b.contains('reset'), onPressed: settling ? null : _reset),
+                      if (settling) const Padding(padding: EdgeInsets.only(top: 8), child: Text('Processing chip transfers...', style: TextStyle(fontSize: 12, color: _muted))),
                     ]),
                   ),
                   const SizedBox(height: 12),
@@ -236,7 +236,7 @@ class _HostScreenState extends State<HostScreen> {
       padding: const EdgeInsets.fromLTRB(14, 11, 14, 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text('Demo Progression Map', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Aero.skyDeep)),
+          Text('Round Progress', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: Aero.skyDeep)),
           Text('90s flow', style: TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, fontSize: 10, color: Aero.skyDeep)),
         ]),
         const SizedBox(height: 8),

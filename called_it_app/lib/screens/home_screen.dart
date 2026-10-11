@@ -26,7 +26,7 @@ class HomeScreen extends StatelessWidget {
                 const SizedBox(width: 9),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    GestureDetector(onTap: () => goTab(context, 0), child: const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF1B4766)))),
+                    GestureDetector(onTap: () => goTab(context, 0), child: const Text('Called It!', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: Color(0xFF1B4766)))),
                     const SizedBox(height: 4),
                     Row(children: [
                       Pill('AI ${s.room.photon}', color: _c(s.room.photon), dot: true),
@@ -41,9 +41,7 @@ class HomeScreen extends StatelessWidget {
             ),
             if (appState.error != null) const Padding(padding: EdgeInsets.only(top: 8), child: Pill('Showing last confirmed data', color: Aero.orange)),
             const SizedBox(height: 12),
-            if (p == null)
-              const Glass(child: Center(child: Padding(padding: EdgeInsets.all(12), child: Text('Your AI companion is waiting for the next moment.', textAlign: TextAlign.center))))
-            else
+            if (p != null)
               PredictionCard(
                 prediction: p,
                 me: s.me,

@@ -105,7 +105,7 @@ class _PredictionCardState extends State<PredictionCard> {
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
               decoration: BoxDecoration(color: const Color(0xFFD7EEFB), borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFB5DDF5))),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text('Pool: ${p.pool} demo chips', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Aero.skyDeep)),
+                Text('Pool: ${p.pool} chips', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Aero.skyDeep)),
                 const SizedBox(width: 4),
                 Container(width: 8, height: 8, decoration: const BoxDecoration(shape: BoxShape.circle, color: Aero.gold)),
               ]),
@@ -120,7 +120,7 @@ class _PredictionCardState extends State<PredictionCard> {
           const SizedBox(height: 10),
           if (mine != null) ...[
             Text('Your pick: $mine', style: const TextStyle(fontWeight: FontWeight.w800)),
-            Text('${p.entryAmount} demo chips recorded', style: const TextStyle(color: Aero.inkSoft, fontSize: 12)),
+            Text('${p.entryAmount} chips recorded', style: const TextStyle(color: Aero.inkSoft, fontSize: 12)),
           ] else if (canPick) ...[
             GlossyButton(label: 'Confirm Pick', icon: Icons.check, loading: busy, onPressed: _sel == null ? null : _confirm),
             if (_err != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_err!, style: const TextStyle(color: Colors.red, fontSize: 12))),

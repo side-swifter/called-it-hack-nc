@@ -154,7 +154,7 @@ class ChipsScreen extends StatelessWidget {
                       opacity: .9,
                       child: SizedBox(
                         width: double.infinity,
-                        child: Text('🔒 Powered by Capital One Nessie API · Purely fictional sandbox economy', textAlign: TextAlign.center, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF4E7691), height: 1.3)),
+                        child: Text('Powered by Capital One Nessie', textAlign: TextAlign.center, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF4E7691), height: 1.3)),
                       ),
                     ),
                   ]),
@@ -179,12 +179,11 @@ class ChipsScreen extends StatelessWidget {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                const Text('CalledIt', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: _navy)),
+                const Text('Called It!', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: _navy)),
                 const SizedBox(width: 8),
                 Flexible(child: MockPill('Chips & Pool', bg: const Color(0xFFD8EEFB), border: const Color(0xFFB5DBF2), fg: _blueText, size: 10.5)),
               ]),
               const SizedBox(height: 2),
-              const Text('Nessie Sandbox', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: _blueText)),
             ]),
           ),
           MockBalancePill(s.me.balance),
@@ -195,12 +194,12 @@ class ChipsScreen extends StatelessWidget {
         onTap: () => _ledgerSheet(context, s),
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('PERSONAL SANDBOX BALANCE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _label, letterSpacing: .7)),
+          const Text('YOUR BALANCE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _label, letterSpacing: .7)),
           const SizedBox(height: 6),
           Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
             Text('${s.me.balance}', style: const TextStyle(fontSize: 38, fontWeight: FontWeight.w800, color: _navy, height: 1)),
             const SizedBox(width: 10),
-            const Text('Demo Chips', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: _blueText)),
+            const Text('Chips', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: _blueText)),
             const Spacer(),
             Container(
               width: 46,
@@ -221,7 +220,6 @@ class ChipsScreen extends StatelessWidget {
             const MockPill('No cash value', bg: Color(0xFFDDF3D3), border: Color(0xFFBFE5AE), fg: Color(0xFF3E9B2B), size: 11),
           ]),
           const SizedBox(height: 8),
-          const Center(child: Text('Capital One Nessie Sandbox · Fictional balance · Educational demo', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: _label))),
         ]),
       );
 
@@ -271,7 +269,7 @@ class ChipsScreen extends StatelessWidget {
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(k.name, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
               const SizedBox(height: 8),
-              Text(k.status == 'confirmed' ? '${k.name} contributed ${k.amount} fictional chips to prediction ${p.id}.' : 'Entry status: ${k.status}.'),
+              Text(k.status == 'confirmed' ? '${k.name} contributed ${k.amount} chips to prediction ${p.id}.' : 'Entry status: ${k.status}.'),
               Text('Pick: ${k.choice}'),
             ]),
           ),
@@ -304,7 +302,7 @@ class ChipsScreen extends StatelessWidget {
   Widget _flow(BuildContext context, Prediction? p, int total) {
     final pending = p?.picks.where((k) => k.status == 'pending').length ?? 0;
     final hasPicks = p != null && p.picks.isNotEmpty;
-    final label = pending > 0 ? 'Transferring ${p?.entryAmount ?? 0} demo chips…' : (hasPicks ? '${p.entryAmount} chips each' : '$total chips recorded');
+    final label = pending > 0 ? 'Transferring ${p?.entryAmount ?? 0} chips…' : (hasPicks ? '${p.entryAmount} chips each' : '$total chips recorded');
     final status = pending > 0 ? ('Pending', const Color(0xFFFFE2CC), const Color(0xFFF5B98A), Aero.orange) : (hasPicks ? ('Active', const Color(0xFFCFEFC9), const Color(0xFFB4E2AC), const Color(0xFF2E9E3E)) : ('Idle', const Color(0xFFE6EEF4), const Color(0xFFC3D3DF), _label));
     return MockCard(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
@@ -322,7 +320,7 @@ class ChipsScreen extends StatelessWidget {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Expanded(child: Text('LIVE SIMULATED TRANSFER FLOW', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF2C7BC2), letterSpacing: .3))),
+          const Expanded(child: Text('POOL FLOW', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF2C7BC2), letterSpacing: .3))),
           MockPill(status.$1, bg: status.$2, border: status.$3, fg: status.$4, size: 10.5),
         ]),
         const SizedBox(height: 8),
@@ -345,7 +343,6 @@ class ChipsScreen extends StatelessWidget {
                 const SizedBox(height: 3),
                 const _Arrow(),
                 const SizedBox(height: 3),
-                const Text('Simulated Escrow hold', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w500, color: _label)),
               ]),
             ),
             const SizedBox(width: 8),
@@ -361,8 +358,6 @@ class ChipsScreen extends StatelessWidget {
             ]),
           ]),
         ),
-        const SizedBox(height: 8),
-        const Center(child: Text('Player Chips → Group Pool · Nessie records simulated transfers', textAlign: TextAlign.center, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: Color(0xFF4E7691)))),
       ]),
     );
   }
@@ -374,7 +369,7 @@ class ChipsScreen extends StatelessWidget {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text('Balance details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
-            Text('Initial demo balance: ${s.me.initial}'),
+            Text('Starting balance: ${s.me.initial}'),
             Text('Group-pool contribution: −${s.me.staked}'),
             Text('Current balance: ${s.me.balance}'),
           ]),

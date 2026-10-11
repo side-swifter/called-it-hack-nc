@@ -1,6 +1,6 @@
 {
-    "name": "called_it_app",
-    "short_name": "called_it_app",
+    "name": "Called It!",
+    "short_name": "Called It!",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

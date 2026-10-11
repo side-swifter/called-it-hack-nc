@@ -16,7 +16,7 @@ class CalledItApp extends StatelessWidget {
   Widget build(BuildContext context) {
     appState.start();
     return MaterialApp(
-      title: 'CalledIt',
+      title: 'Called It!',
       debugShowCheckedModeBanner: false,
       theme: aeroTheme(),
       home: const Shell(),

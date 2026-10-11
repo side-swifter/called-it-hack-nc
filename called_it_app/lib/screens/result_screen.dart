@@ -84,7 +84,7 @@ class ResultScreen extends StatelessWidget {
                     done
                         ? Text.rich(TextSpan(style: const TextStyle(fontSize: 12.5, color: _slate, fontWeight: FontWeight.w500), children: [
                             const TextSpan(text: 'Pool Payout: '),
-                            TextSpan(text: '${r.pool} demo chips distributed', style: const TextStyle(fontWeight: FontWeight.w800, color: Aero.skyDeep)),
+                            TextSpan(text: '${r.pool} chips distributed', style: const TextStyle(fontWeight: FontWeight.w800, color: Aero.skyDeep)),
                           ]))
                         : const Text('Settlement processing', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Aero.orange)),
                   ]),
