@@ -56,7 +56,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
                       Text('Predictions, chips & agent', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF3B8FD4))),
                     ]),
                   ),
-                  MockBalancePill(s.me.balance, onTap: () => goTab(context, 3)),
+                  MockBalancePill(s.me.balance, onTap: () => goTab(context, 2)),
                 ]),
               ),
               if (appState.error != null) const Padding(padding: EdgeInsets.only(top: 8), child: MockPill('Showing last confirmed data', bg: Color(0xFFFFE2CC), border: Color(0xFFF5B98A), fg: Aero.orange)),

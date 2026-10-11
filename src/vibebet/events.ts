@@ -1,4 +1,6 @@
-// In-memory event log and chat buffer feeding the app's Activity and Room screens.
+// Activity log (persisted to .events.json) and settled results for the app. Demo-tagged entries stay in memory only.
+import { readFileSync, writeFileSync } from "node:fs";
+
 export interface ChatEntry {
   id: string;
   sender: string;
@@ -13,14 +15,50 @@ export interface ActivityEntry {
   status: "ok" | "pending" | "failed";
   predictionId?: string;
 }
+export interface StoredResult {
+  predictionId: string;
+  outcome: "YES" | "NO";
+  headline: string;
+  pool: number;
+  announcement: string;
+  announcementStatus: "preparing" | "sending" | "delivered" | "failed";
+  snowflakeOk: boolean;
+  nessieOk: boolean;
+  photonOk: boolean;
+  rows: { name: string; choice: string; correct: boolean; contributed: number; payout: number; balance: number }[];
+}
 
+const FILE = ".events.json";
 const chat: ChatEntry[] = [];
-const activity: ActivityEntry[] = [];
+let activity: ActivityEntry[] = [];
+let results: StoredResult[] = [];
 let seq = 0;
 
-// Entries added while seeding the demo state, so reset can remove exactly those.
+try {
+  const saved = JSON.parse(readFileSync(FILE, "utf8")) as { activity?: ActivityEntry[]; results?: StoredResult[] };
+  activity = saved.activity ?? [];
+  results = saved.results ?? [];
+} catch {
+  /* first run */
+}
+
+// Entries added by the demo routes, so reset can remove exactly those. They are never written to disk.
 const demoChat = new Set<ChatEntry>();
 const demoActivity = new Set<ActivityEntry>();
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+export function persist(): void {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = undefined;
+    try {
+      writeFileSync(FILE, JSON.stringify({ activity: activity.filter((a) => !demoActivity.has(a)), results }));
+    } catch {
+      /* best effort */
+    }
+  }, 150);
+  saveTimer.unref();
+}
 
 export function addMessage(sender: string, text: string, isAgent = false, opts: { at?: Date; demo?: boolean } = {}): void {
   const entry = { id: `m${++seq}`, sender, text, at: (opts.at ?? new Date()).toISOString(), isAgent };
@@ -34,15 +72,23 @@ export function logEvent(kind: ActivityEntry["kind"], text: string, predictionId
   activity.unshift(entry);
   if (opts.demo) demoActivity.add(entry);
   if (activity.length > 100) activity.pop();
+  if (!opts.demo) persist();
 }
 
 export function removeDemoEntries(): void {
-  for (const set of [demoChat, demoActivity]) {
-    const list: unknown[] = set === demoChat ? chat : activity;
-    for (let i = list.length - 1; i >= 0; i--) if (set.has(list[i] as never)) list.splice(i, 1);
-    set.clear();
-  }
+  activity = activity.filter((a) => !demoActivity.has(a));
+  demoActivity.clear();
+  for (let i = chat.length - 1; i >= 0; i--) if (demoChat.has(chat[i])) chat.splice(i, 1);
+  demoChat.clear();
 }
+
+export function addResult(r: StoredResult): StoredResult {
+  results.unshift(r);
+  if (results.length > 20) results.pop();
+  persist();
+  return r;
+}
+export const latestResult = (): StoredResult | undefined => results[0];
 
 export const getMessages = (): ChatEntry[] => chat.slice(-50);
 export const getActivity = (): ActivityEntry[] => activity.slice(0, 60);

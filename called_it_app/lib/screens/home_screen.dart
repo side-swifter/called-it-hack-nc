@@ -33,7 +33,7 @@ class HomeScreen extends StatelessWidget {
                   ]),
                 ),
                 const SizedBox(width: 6),
-                ChipsBadge(s.me.balance, onTap: () => goTab(context, 3)),
+                ChipsBadge(s.me.balance, onTap: () => goTab(context, 2)),
                 const SizedBox(width: 6),
                 GestureDetector(onTap: () => Navigator.pushNamed(context, '/settings'), child: const Icon(Icons.account_circle_outlined, color: Aero.skyDeep, size: 26)),
               ]),
@@ -46,12 +46,11 @@ class HomeScreen extends StatelessWidget {
               PredictionCard(
                 prediction: p,
                 me: s.me,
-                onPool: () => goTab(context, 3),
+                onPool: () => goTab(context, 2),
                 onWhy: () => Navigator.pushNamed(context, '/insights', arguments: p.id),
                 onTap: null,
               ),
             const SizedBox(height: 12),
-            GlossyButton(label: 'View Room', icon: Icons.chat_bubble_outline, onPressed: () => goTab(context, 1)),
             if (s.me.isHost) ...[
               const SizedBox(height: 10),
               GlossyButton(label: 'Host Controls', icon: Icons.tune, color: Aero.skyDeep, onPressed: () => Navigator.pushNamed(context, '/host')),

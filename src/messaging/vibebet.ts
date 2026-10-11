@@ -5,11 +5,11 @@ import { telegram } from "spectrum-ts/providers/telegram";
 import type { Message, Space } from "spectrum-ts";
 import { IMPOSSIBLE_ITEMS, ITEMS, NAMES, STAKE, aliasFor } from "../vibebet/config.js";
 import { recordResult, startApi } from "../vibebet/api.js";
-import { addMessage, logEvent, registerSender } from "../vibebet/events.js";
-import { noteGroup } from "../vibebet/snapshot.js";
+import { addMessage, addResult, logEvent, persist, registerSender, type StoredResult } from "../vibebet/events.js";
+import { bindBot, noteGroup, onRealBetOpened, setGroupTitle } from "../vibebet/snapshot.js";
 import { computeSettlement, type Outcome } from "../vibebet/settle.js";
-import { POT, balanceOf, leaderboard, transfer } from "../vibebet/chips.js";
-import { classifyIntent, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
+import { POT, balanceOf, leaderboard, mirrorSeq, nessieConfirmedSince, transfer } from "../vibebet/chips.js";
+import { classifyGroupAction, classifyIntent, converse, judgeProof, logChat, planBets, writeDare, recentChat, warmUp, logOutcome, reactToPhoto, writeBet } from "../vibebet/brain.js";
 import {
   pick,
   getState,
@@ -19,6 +19,7 @@ import {
   startReading,
   addProof,
   setDeadline,
+  setBetMeta,
   PROOFS_NEEDED,
 } from "../vibebet/state.js";
 
@@ -37,9 +38,8 @@ function messageText(message: Message): string | undefined {
   return undefined;
 }
 
-// Prevent the bot from replying to its own messages or rapid-firing.
+// Prevent the bot from replying to its own messages.
 const sentMessageIds = new Set<string>();
-const lastReplyAt = new Map<string, number>();
 
 const history = new Map<string, string[]>();
 function note(spaceId: string, line: string): void {
@@ -59,13 +59,15 @@ const DECOY_REJECTS = [
   "hmm i'm gonna need way more than that 👀",
   "sure bud. not buying it",
 ];
+// Optional extras, off unless enabled in .env: they add moving parts that are easy to trip over in a demo.
+const DECOY_ON = process.env.DECOY_ENABLED === "true";
+const DARE_ON = process.env.WEEKLY_DARE === "true";
 let lastGroup: Space | undefined;
 
 async function replyIn(space: Space, text: string): Promise<void> {
   note(space.id, `bot: ${text}`);
   if (space.id === lastGroup?.id) addMessage("Photon AI", text, true);
   const sent = await space.send(text);
-  lastReplyAt.set(space.id, Date.now());
   if (sent?.id) {
     sentMessageIds.add(sent.id);
   }
@@ -88,8 +90,17 @@ export async function startVibeBetMessaging(): Promise<{ stop(): Promise<void> }
     await replyIn(lastGroup, text);
   });
   warmUp();
-  startWeeklyDare();
+  if (DARE_ON) startWeeklyDare();
   startApi(() => [...known]);
+  bindBot({
+    members: () => (lastGroup ? [...(groups.get(lastGroup.id) ?? [])] : []),
+    pick: (handle, side) => placePick(handle, side, true),
+    resolve: async (outcome) => {
+      if (getState().phase !== "open") return false;
+      await announceResult(outcome);
+      return true;
+    },
+  });
   const loop = consumeMessages(app);
   void loop.catch(() => undefined);
 
@@ -117,11 +128,9 @@ async function consumeMessages(
     const text = messageText(message);
     const imessageSpace = { type: isGroupSpace(space, message) ? "group" : "dm" };
 
-    // Skip the bot's own outbound echoes, known sent ids, and rapid-fire windows.
+    // Skip the bot's own outbound echoes and known sent ids.
     if (imessageMessage.direction === "outbound") continue;
     if (sentMessageIds.has(message.id)) continue;
-    const last = lastReplyAt.get(space.id);
-    if (last !== undefined && Date.now() - last < 2000) continue;
 
     console.log("[RAW]", {
       spaceType: imessageSpace.type,
@@ -218,6 +227,7 @@ async function handleGroupMessage(
     if (isGroupSpace(space, message)) {
       lastGroup = space;
       noteGroup(space.id);
+      void ensureGroupTitle(space.id);
       addMessage(aliasFor(message.sender.id), text);
     }
   }
@@ -233,8 +243,18 @@ async function handleGroupMessage(
     return;
   }
 
-  const isBetCommand = content.type === "text" && /^\s*\/bet\b/i.test(content.text);
-  // /bet always starts a fresh game, dropping whatever was running.
+  const isBetCommand = content.type === "text" && /^\s*\/bet(?:@\w+)?\b/i.test(content.text);
+  if (isBetCommand && getState().phase === "open") {
+    const here = getState().groupSpace?.id === space.id;
+    await replyIn(
+      space,
+      here
+        ? "there's already a bet running 👀 tell me when it happened (or didn't) and i'll settle it, or say \"cancel the bet\" to scrap it."
+        : "another group has a bet running right now, try again once it's settled.",
+    );
+    return;
+  }
+  // A new /bet replaces anything that was only being set up.
   if (isBetCommand) {
     resetState();
     pendingBets.clear();
@@ -296,13 +316,15 @@ async function handleGroupMessage(
     const target = byName(plan?.target) ?? players[Math.floor(Math.random() * players.length)];
     const item = plan?.item ?? ITEMS[Math.floor(Math.random() * ITEMS.length)];
     pendingPlan = plan && byName(plan.target) ? plan : undefined;
-    openBet(aliasFor(target), item, space, players);
+    openBet(aliasFor(target), item, space, players, target);
+    setBetMeta({ planned: Boolean(pendingPlan), reason: pendingPlan?.reason ?? null });
+    await onRealBetOpened();
     armDeadline();
-    logEvent("prediction", `Bet opened for ${players.length} players`);
+    logEvent("prediction", `Bet opened for ${players.length} players`, getState().betId);
 
     await replyIn(
       space,
-      "alr everyone the bets are on, check ur dm's for it. say a msg here if u don't get it.",
+      "alr everyone the bets are on, check ur dm's for it (or just say yes or no right here). when it's over, tell me if it happened or not and i'll settle it.",
     );
     await sendPrivateBets(app, players, target);
     return;
@@ -317,14 +339,29 @@ async function handleGroupMessage(
   if (!isBetCommand && (await judgeIfPhotoPending(space, message, text))) return;
   const t = text.trim().toLowerCase();
 
-  const resolveAs = state.phase === "open" ? parseResolve(t) : undefined;
-  if (resolveAs) await announceResult(resolveAs);
+  if (state.phase !== "open") return;
+  // Read normal chat: "it happened", "he didn't wear it", "cancel the bet"... (a /resolve typed out still works).
+  const action = parseResolve(t) ?? (looksLikeSettle(t) ? await classifyGroupAction(text, { target: state.targetAlias ?? "someone", item: state.item, recent: history.get(space.id) ?? [] }) : "none");
+  if (action === "yes" || action === "no") {
+    await announceResult(action);
+  } else if (action === "cancel") {
+    const refunded = await cancelBet();
+    await replyIn(space, `bet scrapped 🗑️ ${refunded ? `${refunded} stake${refunded === 1 ? "" : "s"} refunded.` : "nobody had bet yet."}`);
+  }
+}
+
+// Cheap pre-filter so the AI only reads messages that could be about ending the bet.
+function looksLikeSettle(t: string): boolean {
+  return t.length < 140 && /\b(resolve|settle|settled|happened|didn'?t|did not|never|cancel|scrap|call it|called it|over|ended?|done|time'?s up|forget it|called off)\b/.test(t);
 }
 
 // A photo alone proves nothing: stay quiet and wait for the sender's next text.
 function recordPhoto(message: Message): void {
   const sender = message.sender?.id;
-  if (sender) getState().photoFrom.add(sender);
+  if (sender) {
+    getState().photoFrom.add(sender);
+    logEvent("agent", `${aliasFor(sender)} sent a photo as proof`, getState().betId);
+  }
 }
 
 // Judge the text that follows a photo. Returns true if it handled the message.
@@ -334,6 +371,7 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
   if (!sender || state.phase !== "open" || !state.photoFrom.has(sender)) return false;
   if (sender === decoyHolder) {
     state.photoFrom.delete(sender);
+    logEvent("agent", `Proof from ${aliasFor(sender)} rejected`, state.betId, "failed");
     await replyIn(space, DECOY_REJECTS[Math.floor(Math.random() * DECOY_REJECTS.length)]);
     return true;
   }
@@ -344,6 +382,7 @@ async function judgeIfPhotoPending(space: Space, message: Message, text: string)
     recent: history.get(space.id) ?? [],
   });
   await replyIn(space, verdict.reply);
+  logEvent("agent", `Proof from ${aliasFor(sender)} ${verdict.accept ? "accepted" : "rejected"}`, state.betId, verdict.accept ? "ok" : "failed");
   if (verdict.accept) {
     state.photoFrom.delete(sender);
     if (addProof(sender)) await announceResult();
@@ -361,6 +400,7 @@ function armDeadline(): void {
   const ms = (minutes > 0 ? minutes : 10) * 60_000;
   const timer = setTimeout(() => {
     if (getState() !== game) return;
+    logEvent("agent", "Time ran out with no accepted proof: settling as NO", game.betId, "pending");
     void announceResult("no").catch((err) => console.error("Deadline settle failed:", err));
   }, ms);
   timer.unref();
@@ -372,10 +412,14 @@ async function announceResult(outcome: Outcome = "yes"): Promise<void> {
   const group = state.groupSpace;
   if (state.phase !== "open") return;
   settle();
+  const betId = state.betId;
+  const planned = state.planned;
+  const seq0 = mirrorSeq(); // Nessie calls made from here on belong to this settlement
   const target = state.targetAlias ?? "someone";
   // The decoy holder bet on a different question: refund them and keep them out of the real pot.
   if (decoyHolder && state.picks.has(decoyHolder)) {
     await transfer(POT, decoyHolder, STAKE);
+    logEvent("chips", `${aliasFor(decoyHolder)} refunded ${STAKE} chips`, betId);
     state.picks.delete(decoyHolder);
   }
   decoyHolder = undefined;
@@ -383,41 +427,89 @@ async function announceResult(outcome: Outcome = "yes"): Promise<void> {
   const s = computeSettlement(state.picks, outcome, STAKE, targetId ? REBEL_CUT : 0);
   const winners = s.winnerIds.map(aliasFor);
   const losers = s.loserIds.map(aliasFor);
-  if (s.targetBonus) await transfer(POT, targetId!, s.targetBonus);
+  if (s.targetBonus) {
+    await transfer(POT, targetId!, s.targetBonus);
+    logEvent("chips", `${target} earned ${s.targetBonus} chips for going against the crowd`, betId);
+  }
   if (s.refundAll) {
     for (const h of s.loserIds) await transfer(POT, h, STAKE);
+    if (s.loserIds.length) logEvent("chips", `Nobody called it: ${s.loserIds.length} stakes refunded`, betId);
   } else {
-    for (const h of s.winnerIds) await transfer(POT, h, s.payout);
+    for (const h of s.winnerIds) {
+      await transfer(POT, h, s.payout);
+      logEvent("chips", `${aliasFor(h)} won ${s.payout} chips`, betId);
+    }
   }
   logOutcome(target, state.item, outcome === "yes");
-  recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome });
+  recordResult({ target, item: state.item, winners, losers, pot: s.pot, outcome, betId });
   const players = [...state.players];
   const headline =
     outcome === "yes" ? `🚨 ${target} CALLED IT. ${state.item} confirmed 📸` : `🧊 ${target} did not ${state.item}. no show.`;
-  await say(
-    group,
+  const announcement =
     `${headline}\n` +
-      (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
-      (losers.length && winners.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
-      (s.targetBonus ? `${target} went against the crowd and walked off with ${s.targetBonus} chips 😈\n` : "") +
-      `pot was ${s.pot} chips.\n🏦 ` +
-      leaderboard([...state.picks.keys(), ...(s.targetBonus && targetId ? [targetId] : [])]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · "),
-    players,
-  );
+    (winners.length ? `w for ${winners.join(", ")} 🏆 +${s.payout} chips each\n` : `nobody bet ${outcome} lol, everyone gets their chips back\n`) +
+    (losers.length && winners.length ? `L for ${losers.join(", ")} 💀 -${STAKE} chips each\n` : "") +
+    (s.targetBonus ? `${target} went against the crowd and walked off with ${s.targetBonus} chips 😈\n` : "") +
+    `pot was ${s.pot} chips.\n🏦 ` +
+    leaderboard([...state.picks.keys(), ...(s.targetBonus && targetId ? [targetId] : [])]).map(([h, c]) => `${aliasFor(h)} ${c}`).join(" · ");
+
+  // Real result record for the app. Delivery and Nessie flags stay false until they actually happen.
+  const rows: StoredResult["rows"] = [...state.picks].map(([h, side]) => ({
+    name: aliasFor(h),
+    choice: side.toUpperCase(),
+    correct: !s.refundAll && side === outcome,
+    contributed: STAKE,
+    payout: s.refundAll ? STAKE : side === outcome ? s.payout : 0,
+    balance: balanceOf(h),
+  }));
+  if (s.targetBonus && targetId) rows.push({ name: target, choice: "—", correct: false, contributed: 0, payout: s.targetBonus, balance: balanceOf(targetId) });
+  const res = addResult({
+    predictionId: betId,
+    outcome: outcome === "yes" ? "YES" : "NO",
+    headline: outcome === "yes" ? `Confirmed. ${target} did it: '${state.item}'` : `Not today. ${target} didn't: '${state.item}'`,
+    pool: s.pot,
+    announcement,
+    announcementStatus: "sending",
+    snowflakeOk: planned,
+    nessieOk: false,
+    photonOk: false,
+    rows,
+  });
+  void nessieConfirmedSince(seq0).then((ok) => {
+    res.nessieOk = ok;
+    persist();
+  });
+
+  const delivered = await say(group, announcement, players);
+  res.photonOk = delivered;
+  res.announcementStatus = delivered ? "delivered" : "failed";
+  logEvent("agent", delivered ? "Result announced in the group" : "Result announcement could not be delivered", betId, delivered ? "ok" : "failed");
+  persist();
   pendingBets.clear();
   resetState();
 }
 
-// Post in the group if there is one; otherwise DM every player (free shared line).
-async function say(group: Space | null, text: string, players: string[]): Promise<void> {
-  if (group) return replyIn(group, text);
+// Post in the group if there is one; otherwise DM every player (free shared line). True if anything was delivered.
+async function say(group: Space | null, text: string, players: string[]): Promise<boolean> {
+  if (group) {
+    try {
+      await replyIn(group, text);
+      return true;
+    } catch (err) {
+      console.error("Failed to post result in the group:", err);
+      return false;
+    }
+  }
+  let any = false;
   for (const h of players) {
     try {
       await replyIn(await openDm(theApp!, h), text);
+      any = true;
     } catch (err) {
       console.error(`Failed to DM ${h}:`, err);
     }
   }
+  return any;
 }
 
 const KNOWN_FILE = ".known-players.json";
@@ -466,6 +558,57 @@ function standings(groupId?: string): string {
   const rows = leaderboard(ids).map(([h, c], i) => `${i + 1}. ${aliasFor(h)} — ${c} chips`);
   return rows.length ? `🏦 chip leaderboard\n${rows.join("\n")}` : "nobody has chips yet, type /bet";
 }
+// One code path for every pick, whether it came from a DM to the bot or from the app.
+async function placePick(
+  handle: string,
+  side: Outcome,
+  requirePlayer: boolean,
+): Promise<{ ok: boolean; reason?: "closed" | "funds" | "not_player"; duplicate?: boolean }> {
+  const state = getState();
+  if (state.phase !== "open") return { ok: false, reason: "closed" };
+  if (requirePlayer && !state.players.includes(handle)) return { ok: false, reason: "not_player" };
+  const previous = state.picks.get(handle);
+  if (!previous && balanceOf(handle) < STAKE) return { ok: false, reason: "funds" };
+  pick(handle, side);
+  if (!previous) {
+    await transfer(handle, POT, STAKE);
+    logEvent("chips", `${aliasFor(handle)} locked in ${side.toUpperCase()}`, state.betId);
+  }
+  return { ok: true, duplicate: previous === side };
+}
+
+// Locks in a pick and returns the reply to send.
+async function lockIn(me: string, side: Outcome): Promise<string> {
+  const r = await placePick(me, side, false);
+  if (!r.ok) {
+    return r.reason === "funds" ? `not enough chips for this one (${balanceOf(me)} left, need ${STAKE}) 💸` : "picks are closed on this one.";
+  }
+  const state = getState();
+  return `locked in: ${side} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(me)})`;
+}
+
+// Scraps the open bet and gives every staked chip back. Returns how many stakes were refunded.
+async function cancelBet(): Promise<number> {
+  const state = getState();
+  const staked = [...state.picks.keys()];
+  const betId = state.betId;
+  resetState(); // clears the deadline timer and phase first, so nothing else can settle this bet
+  for (const h of staked) await transfer(POT, h, STAKE);
+  logEvent("agent", `Bet cancelled, ${staked.length} stakes refunded`, betId);
+  decoyHolder = undefined;
+  pendingBets.clear();
+  gameGen++;
+  return staked.length;
+}
+
+const groupTitles = new Set<string>();
+async function ensureGroupTitle(chatId: string): Promise<void> {
+  if (!chatId.startsWith("-") || groupTitles.has(chatId)) return;
+  groupTitles.add(chatId);
+  const chat = await tgApi("getChat", { chat_id: chatId });
+  if (chat?.title) setGroupTitle(chat.title);
+}
+
 const pendingBets = new Map<string, string>();
 let gameGen = 0;
 let theApp: Awaited<ReturnType<typeof Spectrum>> | undefined;
@@ -485,8 +628,10 @@ async function startDmGame(app: Awaited<ReturnType<typeof Spectrum>>, space: Spa
   }
   await new Promise((r) => setTimeout(r, 3000));
   const target = players[Math.floor(Math.random() * players.length)];
-  openBet(aliasFor(target), ITEMS[Math.floor(Math.random() * ITEMS.length)], null, players);
+  openBet(aliasFor(target), ITEMS[Math.floor(Math.random() * ITEMS.length)], null, players, target);
+  await onRealBetOpened();
   armDeadline();
+  logEvent("prediction", `Bet opened for ${players.length} players`, getState().betId);
   await say(null, "alr the bets are on, check the next msg 👇", players);
   await sendPrivateBets(app, players, target);
 }
@@ -508,23 +653,27 @@ async function sendPrivateBets(
   target: string,
 ): Promise<void> {
   const state = getState();
-  // Decoy: the target gets a bet about someone else, same format, so it looks real.
-  const others = players.filter((p) => p !== target);
-  const planned = pendingPlan ? others.find((p) => aliasFor(p).toLowerCase() === pendingPlan!.decoyPerson.trim().toLowerCase()) : undefined;
-  const decoyPerson = planned ?? (others.length ? others[Math.floor(Math.random() * others.length)] : target);
-  const decoyItem = IMPOSSIBLE_ITEMS[Math.floor(Math.random() * IMPOSSIBLE_ITEMS.length)];
-  decoyHolder = target;
   targetId = target;
-  const [realBet, decoyBet] = await Promise.all([
-    writeBet(aliasFor(target), state.item, pendingPlan?.reason),
-    writeBet(aliasFor(decoyPerson), decoyItem),
-  ]);
+  let decoyBet: string | undefined;
+  if (DECOY_ON) {
+    // Decoy: the target gets a bet about someone else, same format, so it looks real.
+    const others = players.filter((p) => p !== target);
+    const planned = pendingPlan ? others.find((p) => aliasFor(p).toLowerCase() === pendingPlan!.decoyPerson.trim().toLowerCase()) : undefined;
+    const decoyPerson = planned ?? (others.length ? others[Math.floor(Math.random() * others.length)] : target);
+    const decoyItem = IMPOSSIBLE_ITEMS[Math.floor(Math.random() * IMPOSSIBLE_ITEMS.length)];
+    decoyHolder = target;
+    setBetMeta({ decoyPerson: aliasFor(decoyPerson), decoyItem });
+    decoyBet = await writeBet(aliasFor(decoyPerson), decoyItem);
+  } else {
+    decoyHolder = undefined;
+  }
+  const realBet = await writeBet(aliasFor(target), state.item, pendingPlan?.reason);
   currentRealBet = realBet;
-  console.log("[BETS]", { target: aliasFor(target), real: realBet, decoyFor: aliasFor(decoyPerson), decoy: decoyBet });
+  console.log("[BETS]", { target: aliasFor(target), real: realBet, decoy: decoyBet ?? "off" });
 
   await Promise.all(
     players.map(async (handle) => {
-      const bet = handle === target ? decoyBet : realBet;
+      const bet = handle === target && decoyBet ? decoyBet : realBet;
       betsSent.set(handle, bet);
       try {
         await replyIn(await openDm(app, handle), bet);
@@ -587,18 +736,7 @@ async function handleDM(
   if (state.phase === "open") {
     const intent = await classifyIntent(text, me ? betsSent.get(me) : undefined);
     if ((intent === "yes" || intent === "no") && me) {
-      const firstTime = !state.picks.has(me);
-      if (firstTime && balanceOf(me) < STAKE) {
-        await replyIn(space, `not enough chips for this one (${balanceOf(me)} left, need ${STAKE}) 💸`);
-        return;
-      }
-      pick(me, intent);
-      if (firstTime) await transfer(me, POT, STAKE);
-      if (firstTime) logEvent("chips", `${aliasFor(me)} locked in ${intent.toUpperCase()}`);
-      await replyIn(
-        space,
-        `locked in: ${intent} 🔒 ${STAKE} chips into the pot (pot: ${state.picks.size * STAKE} chips, you have ${balanceOf(me)})`,
-      );
+      await replyIn(space, await lockIn(me, intent));
       return;
     }
     if (intent === "proof") {

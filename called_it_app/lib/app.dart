@@ -7,7 +7,6 @@ import 'screens/chips_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/host_screen.dart';
 import 'screens/result_screen.dart';
-import 'screens/room_screen.dart';
 import 'screens/secondary_screens.dart';
 import 'widgets/aero.dart';
 
@@ -46,15 +45,15 @@ class Shell extends StatefulWidget {
 }
 
 class ShellState extends State<Shell> {
-  int index = 0; // 0 Home, 1 Room, 2 Activity, 3 Chips
+  int index = 0; // 0 Home, 1 Activity, 2 Chips
   void go(int i) => setState(() => index = i);
 
   @override
   Widget build(BuildContext context) {
-    const pages = [HomeScreen(), RoomScreen(), ActivityScreen(), ChipsScreen()];
+    const pages = [HomeScreen(), ActivityScreen(), ChipsScreen()];
     return Scaffold(
       body: AeroBackground(
-        variant: const [0, 2, 1, 0][index],
+        variant: const [2, 1, 0][index],
         child: Column(children: [
           Expanded(child: IndexedStack(index: index, children: pages)),
           _NavBar(index: index, onTap: go),
@@ -73,7 +72,6 @@ class _NavBar extends StatelessWidget {
     // (inactive icon, active icon, label)
     const items = [
       (Icons.home_outlined, Icons.home_rounded, 'Home'),
-      (Icons.chat_bubble_outline_rounded, Icons.chat_bubble_rounded, 'Room'),
       (Icons.bolt_outlined, Icons.bolt_rounded, 'Activity'),
       (Icons.monetization_on_outlined, Icons.monetization_on_rounded, 'Chips'),
     ];
@@ -121,7 +119,7 @@ class _NavBar extends StatelessWidget {
       );
 }
 
-/// Helper for screens: `goTab(context, 3)` jumps to Chips.
+/// Helper for screens: `goTab(context, 2)` jumps to Chips.
 void goTab(BuildContext context, int i) {
   final s = context.findAncestorStateOfType<ShellState>();
   if (s != null) {

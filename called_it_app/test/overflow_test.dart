@@ -40,7 +40,7 @@ void main() {
   }
 
   for (final size in const [(390.0, 844.0), (375.0, 667.0), (430.0, 932.0)]) {
-    for (var tab = 0; tab < 4; tab++) {
+    for (var tab = 0; tab < 3; tab++) {
       testWidgets('EMPTY tab $tab @${size.$1}', (t) async {
         await check(t, const Shell(), empty, size.$1, size.$2);
         t.state<ShellState>(find.byType(Shell)).go(tab);
@@ -52,7 +52,7 @@ void main() {
       await check(t, const HostScreen(), empty, size.$1, size.$2);
       expect(t.takeException(), isNull);
     });
-    for (var tab = 0; tab < 4; tab++) {
+    for (var tab = 0; tab < 3; tab++) {
       testWidgets('tab $tab @${size.$1}', (t) async {
         await check(t, const Shell(), seeded, size.$1, size.$2);
         final s = t.state<ShellState>(find.byType(Shell));

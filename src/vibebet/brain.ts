@@ -57,6 +57,25 @@ export function logOutcome(target: string, bet: string, hit: boolean): void {
   ensureTables().then(() => run("INSERT INTO CALLED_IT_OUTCOMES (target, bet, hit) VALUES (?, ?, ?)", [target, bet, hit])).catch((e) => console.error("[snowflake] outcome failed:", e.message));
 }
 
+/** Share (0-100) of past bets about `target` that hit, from real outcomes only; undefined with no history. */
+export async function hitRate(target: string): Promise<number | undefined> {
+  let hits = 0;
+  let total = 0;
+  if (configured()) {
+    try {
+      await ensureTables();
+      const rows = await run("SELECT COUNT_IF(hit) AS H, COUNT(*) AS T FROM CALLED_IT_OUTCOMES WHERE target = ?", [target]);
+      total = Number(rows[0]?.T ?? 0);
+      hits = Number(rows[0]?.H ?? 0);
+    } catch {
+      /* fall through to in-memory counts */
+    }
+  }
+  if (!total && SEED[target]) [hits, total] = SEED[target];
+  if (!total) return undefined;
+  return Math.min(95, Math.max(5, Math.round((hits / total) * 100)));
+}
+
 async function historyFor(target: string): Promise<[number, number]> {
   if (configured()) {
     try {
@@ -68,8 +87,7 @@ async function historyFor(target: string): Promise<[number, number]> {
       console.error("[snowflake] history failed:", (e as Error).message);
     }
   }
-  if (!SEED[target]) SEED[target] = [3, 4]; // fake history so the demo always has odds
-  return SEED[target];
+  return SEED[target] ?? [3, 4]; // placeholder odds for the bet text only; never counted as real history
 }
 
 export async function writeBet(target: string, item: string, reason?: string): Promise<string> {
@@ -165,6 +183,36 @@ export async function classifyIntent(text: string, bet?: string): Promise<Intent
     console.error("[cortex] intent failed:", (e as Error).message);
   }
   return "other";
+}
+
+export type GroupAction = "yes" | "no" | "cancel" | "none";
+
+// Is someone in the group ending the bet? Only explicit statements count, not casual chatter.
+export async function classifyGroupAction(
+  text: string,
+  ctx: { target: string; item: string; recent: string[] },
+): Promise<GroupAction> {
+  const t = text.trim().toLowerCase();
+  if (/^(cancel|scrap|call off|forget)( the)? bet\b/.test(t)) return "cancel";
+  if (!configured()) return "none";
+  try {
+    const prompt = [
+      `A group chat has a live prop bet: "will ${ctx.target} ${ctx.item} today?". Decide whether the latest message is someone explicitly ENDING the bet.`,
+      `yes = they are saying the bet should be settled because it DID happen (e.g. "ok it happened, settle it", "resolve yes", "he did it, we're done").`,
+      `no = they are saying the bet should be settled because it did NOT happen (e.g. "he didn't wear it, resolve no", "didn't happen, call it").`,
+      `cancel = they want the bet scrapped with no winner (e.g. "cancel the bet", "forget it, scrap this").`,
+      `none = anything else: banter, guesses, jokes, asking questions, or just commenting on what someone is wearing without asking to settle. When unsure, answer none.`,
+      `Chat so far:\n${ctx.recent.slice(-8).join("\n") || "(none)"}`,
+      `Latest message: "${text}"`,
+      `Output exactly one word: yes, no, cancel or none.`,
+    ].join("\n");
+    const rows = await run("SELECT SNOWFLAKE.CORTEX.COMPLETE('mistral-large3', ?) AS R", [prompt]);
+    const out = String(rows[0]?.R ?? "").trim().toLowerCase();
+    for (const a of ["cancel", "yes", "no"] as const) if (out.startsWith(a)) return a;
+  } catch (e) {
+    console.error("[cortex] group action failed:", (e as Error).message);
+  }
+  return "none";
 }
 
 export interface Verdict {

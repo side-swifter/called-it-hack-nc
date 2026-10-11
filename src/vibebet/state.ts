@@ -15,6 +15,12 @@ export interface GameState {
   players: string[];
   timer: ReturnType<typeof setTimeout> | null; // auto-settles "no" at the deadline
   deadline: number | null; // epoch ms
+  betId: string; // stable id the app uses for this bet
+  targetId: string | null; // handle of the person the real bet is about
+  decoyPerson: string | null; // alias the target's decoy bet is about (null until the DMs are written)
+  decoyItem: string | null;
+  reason: string | null; // why the AI picked this bet
+  planned: boolean; // true when Cortex planned the bet from group chat
 }
 
 let state: GameState = {
@@ -28,6 +34,12 @@ let state: GameState = {
   players: [],
   timer: null,
   deadline: null,
+  betId: "",
+  targetId: null,
+  decoyPerson: null,
+  decoyItem: null,
+  reason: null,
+  planned: false,
 };
 
 export function getState(): GameState {
@@ -47,6 +59,12 @@ export function resetState(): void {
     players: [],
     timer: null,
     deadline: null,
+    betId: "",
+    targetId: null,
+    decoyPerson: null,
+    decoyItem: null,
+    reason: null,
+    planned: false,
   };
 }
 
@@ -54,12 +72,25 @@ export function startReading(): void {
   state.phase = "reading";
 }
 
-export function openBet(targetAlias: string, item: string, groupSpace: Space | null, players: string[] = []): void {
+export function openBet(targetAlias: string, item: string, groupSpace: Space | null, players: string[] = [], targetId: string | null = null): void {
+  state.betId = `B${Date.now().toString(36)}`;
+  state.targetId = targetId;
+  state.decoyPerson = null;
+  state.decoyItem = null;
+  state.reason = null;
+  state.planned = false;
   state.item = item;
   state.players = players;
   state.phase = "open";
   state.groupSpace = groupSpace;
   state.targetAlias = targetAlias;
+}
+
+export function setBetMeta(meta: { decoyPerson?: string; decoyItem?: string; reason?: string | null; planned?: boolean }): void {
+  if (meta.decoyPerson !== undefined) state.decoyPerson = meta.decoyPerson;
+  if (meta.decoyItem !== undefined) state.decoyItem = meta.decoyItem;
+  if (meta.reason !== undefined) state.reason = meta.reason;
+  if (meta.planned !== undefined) state.planned = meta.planned;
 }
 
 export function pick(handle: string, side: "yes" | "no"): void {

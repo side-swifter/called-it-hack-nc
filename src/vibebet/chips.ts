@@ -68,10 +68,10 @@ export function balanceOf(handle: string): number {
 }
 
 // This Nessie has no payee transfers, so a transfer = withdrawal + deposit.
-async function mirror(from: string, to: string, amount: number): Promise<void> {
+async function mirror(from: string, to: string, amount: number): Promise<boolean> {
   try {
     const [a, b] = await Promise.all([ensureAccount(from), ensureAccount(to)]);
-    if (!a || !b) return;
+    if (!a || !b) return false;
     const body = {
       medium: "balance",
       transaction_date: new Date().toISOString().slice(0, 10),
@@ -83,9 +83,23 @@ async function mirror(from: string, to: string, amount: number): Promise<void> {
       nessie("POST", `/accounts/${a}/withdrawals`, body),
       nessie("POST", `/accounts/${b}/deposits`, body),
     ]);
+    return true;
   } catch (err) {
     console.error("[nessie] transfer skipped:", (err as Error).message);
+    return false;
   }
+}
+
+// Every Nessie mirror is tracked so the app only reports "Nessie settled" once the sandbox calls finished.
+const mirrors = new Map<number, Promise<boolean>>();
+let mirrorCount = 0;
+export const mirrorSeq = (): number => mirrorCount;
+export async function nessieConfirmedSince(seq: number, timeoutMs = 15_000): Promise<boolean> {
+  if (!key()) return false;
+  const pending = [...mirrors].filter(([n]) => n > seq).map(([, p]) => p);
+  if (!pending.length) return false;
+  const all = Promise.all(pending).then((r) => r.every(Boolean));
+  return Promise.race([all, new Promise<boolean>((res) => setTimeout(() => res(false), timeoutMs).unref())]);
 }
 
 // Stakes go into the pot; winners are paid out of it. Balances persist across restarts.
@@ -95,7 +109,9 @@ export async function transfer(from: string, to: string, amount: number): Promis
   balances.set(from, (balances.get(from) ?? (from === POT ? 0 : START_CHIPS)) - amount);
   balances.set(to, (balances.get(to) ?? (to === POT ? 0 : START_CHIPS)) + amount);
   save();
-  void mirror(from, to, amount);
+  const n = ++mirrorCount;
+  mirrors.set(n, mirror(from, to, amount));
+  mirrors.delete(n - 60);
 }
 
 export function setBalance(handle: string, amount: number): void {

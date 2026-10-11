@@ -16,6 +16,7 @@ export interface ResultRecord {
   losers: string[];
   pot: number;
   outcome: "yes" | "no";
+  betId?: string;
 }
 const results: ResultRecord[] = [];
 
@@ -45,7 +46,7 @@ async function nameFor(id: string): Promise<string | undefined> {
 
 export function recordResult(r: Omit<ResultRecord, "at">): void {
   results.unshift({ at: new Date().toISOString(), ...r });
-  logEvent("chips", `Bet settled: ${r.winners.length ? r.winners.join(", ") + " called it" : "nobody called it"} (pot ${r.pot})`);
+  logEvent("chips", `Bet settled: ${r.winners.length ? r.winners.join(", ") + " called it" : "nobody called it"} (pot ${r.pot})`, r.betId);
   if (results.length > 20) results.pop();
 }
 

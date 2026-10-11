@@ -24,7 +24,7 @@ class ResultScreen extends StatelessWidget {
                 return Center(child: Glass(child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Text('No settled result yet.'),
                   const SizedBox(height: 8),
-                  GlossyButton(label: 'Back to Room', onPressed: () => _back(context, 1)),
+                  GlossyButton(label: 'Back to Home', onPressed: () => _back(context, 0)),
                 ])));
               }
               final done = r.nessieOk;
@@ -134,9 +134,9 @@ class ResultScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Row(children: [
-                  Expanded(child: _Mini(label: 'Back to Room', onTap: () => _back(context, 1))),
+                  Expanded(child: _Mini(label: 'Home', onTap: () => _back(context, 0))),
                   const SizedBox(width: 8),
-                  Expanded(child: _Mini(label: 'Activity', onTap: () => _back(context, 2))),
+                  Expanded(child: _Mini(label: 'Activity', onTap: () => _back(context, 1))),
                   const SizedBox(width: 8),
                   Expanded(child: _Mini(label: 'Transfers', onTap: () => _ledger(context, r))),
                 ]),
