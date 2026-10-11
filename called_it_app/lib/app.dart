@@ -54,7 +54,7 @@ class ShellState extends State<Shell> {
     const pages = [HomeScreen(), RoomScreen(), ActivityScreen(), ChipsScreen()];
     return Scaffold(
       body: AeroBackground(
-        variant: index == 2 ? 1 : 0,
+        variant: const [0, 2, 1, 0][index],
         child: Column(children: [
           Expanded(child: IndexedStack(index: index, children: pages)),
           _NavBar(index: index, onTap: go),

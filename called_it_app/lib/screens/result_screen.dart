@@ -13,7 +13,7 @@ class ResultScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
         body: AeroBackground(
-          variant: 1,
+          variant: 3,
           child: ListenableBuilder(
             listenable: appState,
             builder: (context, _) {
