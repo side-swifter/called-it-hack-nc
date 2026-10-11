@@ -76,6 +76,51 @@ export async function hitRate(target: string): Promise<number | undefined> {
   return Math.min(95, Math.max(5, Math.round((hits / total) * 100)));
 }
 
+export interface PastBet {
+  at: string;
+  target: string;
+  item: string;
+  hit: boolean;
+}
+
+// Stored ts values are TIMESTAMP_NTZ in the Snowflake session's local zone, so shift by the session's own offset to UTC.
+let pastCache: { rows: PastBet[]; at: number; limit: number } | undefined;
+let pastLoading = false;
+
+function refreshPast(limit: number): void {
+  if (pastLoading || !configured()) return;
+  pastLoading = true;
+  ensureTables()
+    .then(() =>
+      run(
+        `SELECT TO_VARCHAR(DATEADD('second', DATEDIFF('second', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ, SYSDATE()), ts), 'YYYY-MM-DD"T"HH24:MI:SS.FF3') AS TS, target AS TARGET, bet AS BET, hit AS HIT FROM CALLED_IT_OUTCOMES ORDER BY ts DESC LIMIT ${Math.max(1, Math.floor(limit))}`,
+      ),
+    )
+    .then((rows) => {
+      pastCache = {
+        rows: rows.map((r) => ({ at: `${String(r.TS)}Z`, target: String(r.TARGET), item: String(r.BET), hit: Boolean(r.HIT) })),
+        at: Date.now(),
+        limit,
+      };
+    })
+    .catch((e) => console.error("[snowflake] past bets failed:", (e as Error).message))
+    .finally(() => {
+      pastLoading = false;
+    });
+}
+
+/** Synchronous view of the cache: returns the last known rows and refreshes in the background when stale. */
+export function pastBetsCached(limit = 20): PastBet[] {
+  if (!configured()) return [];
+  if (!pastCache || Date.now() - pastCache.at > 30_000 || pastCache.limit < limit) refreshPast(limit);
+  return (pastCache?.rows ?? []).slice(0, limit);
+}
+
+/** Real past bet outcomes, newest first. Served from a 30s cache; never throws or waits on Snowflake. */
+export async function pastBets(limit = 20): Promise<PastBet[]> {
+  return pastBetsCached(limit);
+}
+
 async function historyFor(target: string): Promise<[number, number]> {
   if (configured()) {
     try {

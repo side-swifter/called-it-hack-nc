@@ -14,7 +14,10 @@ class AeroBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Stack(fit: StackFit.expand, children: [
         const ColoredBox(color: Color(0xFF3FA2F0)),
-        Image.asset('assets/bg/${_files[variant]}.jpg', fit: BoxFit.cover, filterQuality: FilterQuality.high, errorBuilder: (_, _, _) => const SizedBox()),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 450),
+          child: Image.asset('assets/bg/${_files[variant]}.jpg', key: ValueKey(variant), fit: BoxFit.cover, width: double.infinity, height: double.infinity, filterQuality: FilterQuality.high, errorBuilder: (_, _, _) => const SizedBox()),
+        ),
         // light wash so the white glass cards stay readable over busy photos
         DecoratedBox(decoration: BoxDecoration(gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Colors.white.withValues(alpha: .18), Colors.white.withValues(alpha: .02)]))),
         SafeArea(child: child),

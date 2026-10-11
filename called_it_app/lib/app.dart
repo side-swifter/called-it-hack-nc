@@ -46,16 +46,33 @@ class Shell extends StatefulWidget {
 
 class ShellState extends State<Shell> {
   int index = 0; // 0 Home, 1 Activity, 2 Chips
-  void go(int i) => setState(() => index = i);
+  final _pages = PageController();
+
+  void go(int i) {
+    if (i == index) return;
+    setState(() => index = i);
+    _pages.animateToPage(i, duration: const Duration(milliseconds: 380), curve: Curves.easeOutCubic);
+  }
+
+  @override
+  void dispose() {
+    _pages.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    const pages = [HomeScreen(), ActivityScreen(), ChipsScreen()];
     return Scaffold(
       body: AeroBackground(
         variant: const [2, 1, 0][index],
         child: Column(children: [
-          Expanded(child: IndexedStack(index: index, children: pages)),
+          Expanded(
+            child: PageView(
+              controller: _pages,
+              physics: const NeverScrollableScrollPhysics(),
+              children: const [HomeScreen(), ActivityScreen(), ChipsScreen()],
+            ),
+          ),
           _NavBar(index: index, onTap: go),
         ]),
       ),
@@ -67,56 +84,76 @@ class _NavBar extends StatelessWidget {
   const _NavBar({required this.index, required this.onTap});
   final int index;
   final ValueChanged<int> onTap;
+
+  static const _anim = Duration(milliseconds: 340);
+  // (inactive icon, active icon, label)
+  static const items = [
+    (Icons.home_outlined, Icons.home_rounded, 'Home'),
+    (Icons.bolt_outlined, Icons.bolt_rounded, 'Activity'),
+    (Icons.monetization_on_outlined, Icons.monetization_on_rounded, 'Chips'),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    // (inactive icon, active icon, label)
-    const items = [
-      (Icons.home_outlined, Icons.home_rounded, 'Home'),
-      (Icons.bolt_outlined, Icons.bolt_rounded, 'Activity'),
-      (Icons.monetization_on_outlined, Icons.monetization_on_rounded, 'Chips'),
-    ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
       child: Glass(
         padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 8),
         radius: 28,
-        child: Row(children: [
-          for (var i = 0; i < items.length; i++)
-            Expanded(
-              child: GestureDetector(
+        child: LayoutBuilder(builder: (context, c) {
+          // The active tab grows and the others shrink; widths animate between the two states.
+          final activeW = c.maxWidth * 0.44;
+          final inactiveW = (c.maxWidth - activeW) / (items.length - 1);
+          return Row(children: [
+            for (var i = 0; i < items.length; i++)
+              GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () => onTap(i),
-                child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: i == index ? _active(items[i]) : _inactive(items[i]))),
+                child: AnimatedContainer(
+                  duration: _anim,
+                  curve: Curves.easeOutCubic,
+                  width: i == index ? activeW : inactiveW,
+                  height: 46,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: i == index
+                        ? const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD9F1FF), Color(0xFFA9DBFA)])
+                        : const LinearGradient(colors: [Color(0x00D9F1FF), Color(0x00A9DBFA)]),
+                    border: Border.all(color: i == index ? Colors.white : const Color(0x00FFFFFF), width: 1.4),
+                    boxShadow: [BoxShadow(color: i == index ? const Color(0x330B6FC2) : const Color(0x000B6FC2), blurRadius: 8, offset: const Offset(0, 3))],
+                  ),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutBack,
+                    transitionBuilder: (child, a) => FadeTransition(opacity: a, child: ScaleTransition(scale: Tween(begin: .7, end: 1.0).animate(a), child: child)),
+                    child: KeyedSubtree(
+                      key: ValueKey(i == index),
+                      child: FittedBox(fit: BoxFit.scaleDown, child: i == index ? _active(items[i]) : _inactive(items[i])),
+                    ),
+                  ),
+                ),
               ),
-            ),
-        ]),
+          ]);
+        }),
       ),
     );
   }
 
-  Widget _active((IconData, IconData, String) it) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: const LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [Color(0xFFD9F1FF), Color(0xFFA9DBFA)]),
-          border: Border.all(color: Colors.white, width: 1.4),
-          boxShadow: const [BoxShadow(color: Color(0x330B6FC2), blurRadius: 8, offset: Offset(0, 3))],
-        ),
+  Widget _active((IconData, IconData, String) it) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(it.$2, size: 20, color: Aero.skyDeep),
+          Icon(it.$2, size: 21, color: Aero.skyDeep),
           const SizedBox(width: 5),
           Text(it.$3, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Aero.skyDeep)),
         ]),
       );
 
-  Widget _inactive((IconData, IconData, String) it) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(it.$1, size: 24, color: Aero.inkSoft),
-          const SizedBox(height: 2),
-          Text(it.$3, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Aero.inkSoft)),
-        ]),
-      );
+  Widget _inactive((IconData, IconData, String) it) => Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(it.$1, size: 24, color: Aero.inkSoft),
+        const SizedBox(height: 2),
+        Text(it.$3, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Aero.inkSoft)),
+      ]);
 }
 
 /// Helper for screens: `goTab(context, 2)` jumps to Chips.

@@ -1,7 +1,7 @@
 // App-facing game model: one prediction at a time, chips moved through chips.ts, state served as Snapshot.
 import { POT, balanceOf, setBalance, transfer } from "./chips.js";
 import { ITEMS, NAMES, START_CHIPS, STAKE, aliasFor } from "./config.js";
-import { hitRate, planBets, recentChat } from "./brain.js";
+import { hitRate, pastBetsCached, planBets, recentChat } from "./brain.js";
 import { addMessage as addMsg, getActivity, hasSender, latestResult, logEvent as logEv, removeDemoEntries, sendToGroup } from "./events.js";
 import { getState } from "./state.js";
 
@@ -83,6 +83,22 @@ function oddsFor(alias: string): number {
 }
 const status = (v: unknown): string => (v ? "connected" : "unavailable");
 
+// Real past outcomes from Snowflake as timeline entries, skipping any this run already logged (same target+item within 2 minutes).
+function mergeHistory(live: ReturnType<typeof getActivity>, past: ReturnType<typeof pastBetsCached>) {
+  const extra = past
+    .filter((h) => {
+      const t = Date.parse(h.at);
+      return !live.some((a) => Math.abs(Date.parse(a.at) - t) < 120_000 && a.text.includes(h.target) && a.text.includes(h.item));
+    })
+    .map((h) => ({
+      at: h.at,
+      kind: "prediction" as const,
+      text: h.hit ? `${h.target} wore ${h.item}: called it` : `${h.target} didn't wear ${h.item}`,
+      status: "ok" as const,
+    }));
+  return [...live, ...extra].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 60);
+}
+
 export function snapshot(): any {
   const me = hostId() ?? DEFAULT_ME;
   const players = realPlayers();
@@ -95,7 +111,19 @@ export function snapshot(): any {
     snowflake: status(process.env.SNOWFLAKE_ACCOUNT),
     nessie: status(process.env.NESSIE_API_KEY),
   };
-  const base = { room, players: players.map((id) => ({ id, name: nameOf(id), balance: balanceOf(id) })), messages: [], activity: getActivity(), session: started };
+  const history = pastBetsCached(20);
+  const record = (name: string): { bets: number; hits: number } => {
+    const mine = history.filter((h) => h.target.toLowerCase() === name.toLowerCase());
+    return { bets: mine.length, hits: mine.filter((h) => h.hit).length };
+  };
+  const base = {
+    room,
+    players: players.map((id) => ({ id, name: nameOf(id), balance: balanceOf(id), ...record(nameOf(id)) })),
+    messages: [],
+    activity: mergeHistory(getActivity(), history),
+    history,
+    session: started,
+  };
 
   // 1. A real bet is running in the Telegram group.
   if (live) {

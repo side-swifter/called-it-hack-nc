@@ -51,9 +51,22 @@ class Player {
   Player.fromJson(Map<String, dynamic> j)
       : id = j['id'] ?? '',
         name = j['name'] ?? '',
-        balance = _i(j['balance']);
+        balance = _i(j['balance']),
+        bets = _i(j['bets']),
+        hits = _i(j['hits']);
   final String id, name;
-  final int balance;
+  final int balance, bets, hits;
+}
+
+class HistoryItem {
+  HistoryItem.fromJson(Map<String, dynamic> j)
+      : at = DateTime.tryParse(j['at'] ?? '') ?? DateTime.now(),
+        target = j['target'] ?? '',
+        item = j['item'] ?? '',
+        hit = j['hit'] == true;
+  final DateTime at;
+  final String target, item;
+  final bool hit;
 }
 
 class ChatMsg {
@@ -133,6 +146,7 @@ class Snapshot {
         players = [for (final p in (j['players'] as List? ?? [])) Player.fromJson(p)],
         messages = [for (final m in (j['messages'] as List? ?? [])) ChatMsg.fromJson(m)],
         activity = [for (final a in (j['activity'] as List? ?? [])) ActivityItem.fromJson(a)],
+        history = [for (final h in (j['history'] as List? ?? [])) HistoryItem.fromJson(h)],
         result = j['result'] == null ? null : Result.fromJson(j['result']),
         hostStage = j['hostStage'] ?? 'ready',
         picksLogged = _i(j['picksLogged']),
@@ -143,6 +157,7 @@ class Snapshot {
   final List<Player> players;
   final List<ChatMsg> messages;
   final List<ActivityItem> activity;
+  final List<HistoryItem> history;
   final Result? result;
   final String hostStage; // ready|generating|picks_open|picks_locked|awaiting_result|settling|settled|error
   final int picksLogged, picksExpected;

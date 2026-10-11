@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app.dart';
 import '../core/api.dart';
+import '../core/models.dart';
 import '../core/theme.dart';
 import '../widgets/aero.dart';
 import '../widgets/prediction_card.dart';
@@ -51,11 +52,74 @@ class HomeScreen extends StatelessWidget {
                 onTap: null,
               ),
             const SizedBox(height: 12),
+            _Standings(players: s.players, meId: s.me.id),
+            if (s.history.isNotEmpty) ...[const SizedBox(height: 12), _RecentBets(items: s.history)],
+            const SizedBox(height: 12),
             if (s.me.isHost) ...[
               const SizedBox(height: 10),
               GlossyButton(label: 'Host Controls', icon: Icons.tune, color: Aero.skyDeep, onPressed: () => Navigator.pushNamed(context, '/host')),
             ],
           ]);
         },
+      );
+}
+
+
+const _label = TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF5D7F99), letterSpacing: .7);
+
+class _Standings extends StatelessWidget {
+  const _Standings({required this.players, required this.meId});
+  final List<Player> players;
+  final String meId;
+  @override
+  Widget build(BuildContext context) {
+    final ranked = [...players]..sort((a, b) => b.balance.compareTo(a.balance));
+    return Glass(
+      radius: 24,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('STANDINGS', style: _label),
+        const SizedBox(height: 8),
+        if (ranked.isEmpty) const Text('No players yet. Add the bot to your Telegram group and type /bet.'),
+        for (var i = 0; i < ranked.length; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              SizedBox(width: 22, child: Text('${i + 1}', style: const TextStyle(fontWeight: FontWeight.w800, color: Aero.inkSoft))),
+              Avatar(ranked[i].name, size: 32),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(ranked[i].id == meId ? '${ranked[i].name} (you)' : ranked[i].name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
+                  if (ranked[i].bets > 0) Text('${ranked[i].hits}/${ranked[i].bets} called', style: const TextStyle(fontSize: 11, color: Aero.inkSoft)),
+                ]),
+              ),
+              Text('${ranked[i].balance} chips', style: const TextStyle(fontWeight: FontWeight.w800, color: Aero.skyDeep)),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
+class _RecentBets extends StatelessWidget {
+  const _RecentBets({required this.items});
+  final List<HistoryItem> items;
+  @override
+  Widget build(BuildContext context) => Glass(
+        radius: 24,
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('RECENT BETS', style: _label),
+          const SizedBox(height: 8),
+          for (final h in items.take(5))
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                Avatar(h.target, size: 28),
+                const SizedBox(width: 10),
+                Expanded(child: Text('${h.target} · ${h.item}', overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700))),
+                Pill(h.hit ? 'Called it' : 'Missed', color: h.hit ? Aero.grass : Aero.orange),
+              ]),
+            ),
+        ]),
       );
 }
